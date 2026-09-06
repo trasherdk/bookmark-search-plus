@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bookmark Search Plus</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header class="toolbar">
+      <label class="search-wrap">
+        <span class="visually-hidden">Search bookmarks</span>
+        <input
+          id="search"
+          type="text"
+          placeholder="Search bookmarks"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button id="clear-search" class="icon-btn hidden" type="button" title="Clear search">
+          ×
+        </button>
+      </label>
+      <button id="toggle-filters" class="icon-btn" type="button" title="Show search filters" aria-expanded="false">
+        ⚙
+      </button>
+      <div class="tool-group">
+        <button id="font-down" class="icon-btn font-btn" type="button" title="Smaller text">A−</button>
+        <button id="font-up" class="icon-btn font-btn" type="button" title="Larger text">A+</button>
+        <button id="close-panel" class="icon-btn close-btn" type="button" title="Close">×</button>
+      </div>
+    </header>
+
+    <section id="filters" class="filters hidden" aria-label="Search filters">
+      <label>
+        Match in
+        <select id="filter-field">
+          <option value="all">Title + URL</option>
+          <option value="title">Title only</option>
+          <option value="url">URL only</option>
+        </select>
+      </label>
+      <label>
+        Look in
+        <select id="filter-scope">
+          <option value="all">Entire tree</option>
+          <option value="tree">Current folder tree</option>
+          <option value="folder">Current folder only</option>
+        </select>
+      </label>
+      <label>
+        How
+        <select id="filter-match">
+          <option value="words">Match words</option>
+          <option value="regex">Use regex</option>
+        </select>
+      </label>
+      <label>
+        Show
+        <select id="filter-type">
+          <option value="all">All items</option>
+          <option value="folders">Folders only</option>
+          <option value="bookmarks">Bookmarks only</option>
+        </select>
+      </label>
+      <button id="reset-filters" class="text-btn hidden" type="button">Reset filters</button>
+    </section>
+
+    <div id="status" class="status">
+      <span id="status-text">Loading bookmarks…</span>
+      <button id="go-parent" class="text-btn" type="button" disabled>Parent</button>
+    </div>
+
+    <main id="list" class="list" tabindex="-1"></main>
+
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>

@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "Bookmark Search Plus",
+  "short_name": "BSP",
+  "version": "1.4.1",
+  "description": "Find bookmarks quickly. Search titles, URLs, and folders, then reveal them in the tree.",
+  "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "Bookmark Search Plus",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "side_panel": {
+    "default_path": "src/sidepanel.html"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Period",
+        "mac": "Command+Shift+Period"
+      },
+      "description": "Open Bookmark Search Plus"
+    }
+  },
+  "permissions": [
+    "sidePanel",
+    "bookmarks",
+    "favicon",
+    "storage",
+    "tabs"
+  ]
+}

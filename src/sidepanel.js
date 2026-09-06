@@ -1,0 +1,632 @@
+import { BookmarkStore, faviconUrl } from "./bookmarks-store.js";
+import { clampFontSize, extensionAlive, FONT_DEFAULT, getPrefs, isContextInvalidated, setPrefs } from "./prefs.js";
+import { DEFAULT_FILTERS, filtersAreDefault, searchBookmarks } from "./search.js";
+
+const STORAGE_KEY = "bsp-state";
+const ROOT_ID = "0";
+
+const els = {
+  search: document.getElementById("search"),
+  clearSearch: document.getElementById("clear-search"),
+  toggleFilters: document.getElementById("toggle-filters"),
+  fontDown: document.getElementById("font-down"),
+  fontUp: document.getElementById("font-up"),
+  closePanel: document.getElementById("close-panel"),
+  filters: document.getElementById("filters"),
+  field: document.getElementById("filter-field"),
+  scope: document.getElementById("filter-scope"),
+  match: document.getElementById("filter-match"),
+  type: document.getElementById("filter-type"),
+  resetFilters: document.getElementById("reset-filters"),
+  status: document.getElementById("status"),
+  statusText: document.getElementById("status-text"),
+  goParent: document.getElementById("go-parent"),
+  list: document.getElementById("list"),
+};
+
+function noteDeadContext() {
+  if (!els.status) {
+    return;
+  }
+  els.status.classList.add("error");
+  els.statusText.textContent = "Extension was reloaded. Close this panel and open it again.";
+}
+
+window.addEventListener("unhandledrejection", (event) => {
+  if (isContextInvalidated(event.reason)) {
+    event.preventDefault();
+    noteDeadContext();
+  }
+});
+
+window.addEventListener("error", (event) => {
+  if (isContextInvalidated(event.error)) {
+    event.preventDefault();
+    noteDeadContext();
+  }
+});
+
+const store = new BookmarkStore();
+
+const state = {
+  query: "",
+  filters: { ...DEFAULT_FILTERS },
+  filtersOpen: false,
+  expanded: new Set(),
+  savedExpanded: null,
+  scopeFolderId: null,
+  selectedId: null,
+  revealMode: false,
+  rows: [],
+};
+
+let persistTimer = 0;
+let searchTimer = 0;
+
+function folderIcon() {
+  return `<svg class="folder-glyph icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M1.75 3.5h4.1l1.15 1.25H14.5v8.25H1.75z"/></svg>`;
+}
+
+function bookmarkIcon(url) {
+  const src = faviconUrl(url, 16);
+  return `<img class="icon" src="${src}" alt="" width="16" height="16" />`;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function openModeFromEvent(event) {
+  if (event.shiftKey) {
+    return "window";
+  }
+  if (event.altKey) {
+    return "current";
+  }
+  return "tab";
+}
+
+async function activeBrowserTab() {
+  const win = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
+  if (!win) {
+    return null;
+  }
+  const [tab] = await chrome.tabs.query({ active: true, windowId: win.id });
+  return tab ?? null;
+}
+
+async function openBookmark(url, mode) {
+  if (!url) {
+    return;
+  }
+  if (mode === "window") {
+    await chrome.windows.create({ url });
+    return;
+  }
+  const tab = await activeBrowserTab();
+  if (mode === "current" && tab?.id != null) {
+    await chrome.tabs.update(tab.id, { url });
+    return;
+  }
+  await chrome.tabs.create({
+    url,
+    windowId: tab?.windowId,
+    index: tab != null ? tab.index + 1 : undefined,
+    openerTabId: tab?.id,
+    active: true,
+  });
+}
+
+function defaultExpanded() {
+  return new Set(store.visibleRoots().map((node) => node.id));
+}
+
+async function loadPersisted() {
+  const stored = await chrome.storage.local.get(STORAGE_KEY);
+  const data = stored[STORAGE_KEY] ?? {};
+  if (Array.isArray(data.expandedIds) && data.expandedIds.length) {
+    state.expanded = new Set(data.expandedIds);
+  } else {
+    state.expanded = defaultExpanded();
+  }
+  state.filters = { ...DEFAULT_FILTERS, ...(data.filters ?? {}) };
+  state.filtersOpen = Boolean(data.filtersOpen);
+  const prefs = await getPrefs();
+  applyFontSize(prefs.fontSize);
+}
+
+function applyFontSize(size) {
+  document.documentElement.style.setProperty("--ui-font", `${clampFontSize(size)}px`);
+}
+
+function persistSoon() {
+  clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    if (!extensionAlive() || !chrome.storage?.local) {
+      return;
+    }
+    chrome.storage.local
+      .set({
+        [STORAGE_KEY]: {
+          expandedIds: [...state.expanded],
+          filters: state.filters,
+          filtersOpen: state.filtersOpen,
+        },
+      })
+      .catch(() => {});
+  }, 200);
+}
+
+function isSearching() {
+  return state.query.trim().length > 0 && !state.revealMode;
+}
+
+function beginSearchSession() {
+  if (state.savedExpanded == null) {
+    state.savedExpanded = new Set(state.expanded);
+    state.scopeFolderId = store.currentFolderId(state.selectedId);
+  }
+}
+
+function endSearchSession() {
+  if (state.savedExpanded) {
+    state.expanded = new Set(state.savedExpanded);
+    state.savedExpanded = null;
+  }
+  state.scopeFolderId = null;
+  state.revealMode = false;
+}
+
+function expandAncestors(id) {
+  for (const ancestor of store.getAncestors(id)) {
+    state.expanded.add(ancestor.id);
+  }
+}
+
+function parentId(id) {
+  const node = store.get(id);
+  if (!node?.parentId || node.parentId === ROOT_ID) {
+    return null;
+  }
+  return node.parentId;
+}
+
+function flattenTree() {
+  const rows = [];
+  const walk = (node, depth) => {
+    rows.push({ kind: "tree", node, depth });
+    if (store.isFolder(node) && state.expanded.has(node.id) && node.children) {
+      for (const child of node.children) {
+        walk(child, depth + 1);
+      }
+    }
+  };
+  for (const root of store.visibleRoots()) {
+    walk(root, 0);
+  }
+  return rows;
+}
+
+function visibleIndex(id) {
+  return state.rows.findIndex((row) => row.node.id === id);
+}
+
+function selectId(id, { scroll = true } = {}) {
+  state.selectedId = id;
+  render({ scroll });
+}
+
+function revealInTree(id) {
+  if (state.query.trim()) {
+    beginSearchSession();
+    state.revealMode = true;
+  }
+  expandAncestors(id);
+  const node = store.get(id);
+  if (store.isFolder(node)) {
+    state.expanded.add(id);
+  }
+  persistSoon();
+  selectId(id);
+}
+
+function goParentFolder() {
+  const target = parentId(state.selectedId);
+  if (!target) {
+    return;
+  }
+  revealInTree(target);
+}
+
+async function activateNode(node, event, { fromResults = false } = {}) {
+  const folder = store.isFolder(node);
+  if (fromResults) {
+    revealInTree(node.id);
+    if (!folder) {
+      await openBookmark(node.url, openModeFromEvent(event));
+    }
+    return;
+  }
+
+  if (folder) {
+    if (state.expanded.has(node.id)) {
+      state.expanded.delete(node.id);
+    } else {
+      state.expanded.add(node.id);
+    }
+    persistSoon();
+    selectId(node.id);
+    return;
+  }
+
+  selectId(node.id, { scroll: false });
+  await openBookmark(node.url, openModeFromEvent(event));
+}
+
+function applyFilterInputs() {
+  els.field.value = state.filters.field;
+  els.scope.value = state.filters.scope;
+  els.match.value = state.filters.match;
+  els.type.value = state.filters.type;
+  els.filters.classList.toggle("hidden", !state.filtersOpen);
+  els.toggleFilters.setAttribute("aria-expanded", String(state.filtersOpen));
+  els.toggleFilters.title = state.filtersOpen ? "Hide search filters" : "Show search filters";
+  els.resetFilters.classList.toggle("hidden", filtersAreDefault(state.filters));
+}
+
+function updateStatus(resultCount, error) {
+  els.status.classList.toggle("error", Boolean(error));
+  if (error) {
+    els.statusText.textContent = error;
+  } else if (isSearching()) {
+    els.statusText.textContent =
+      resultCount === 1 ? "1 match" : `${resultCount} matches`;
+  } else if (state.revealMode && state.query.trim()) {
+    els.statusText.textContent = "Showing in tree — Esc for results";
+  } else {
+    const count = store.byId.size > 0 ? store.byId.size - 1 : 0;
+    els.statusText.textContent = `${count} items`;
+  }
+
+  els.goParent.disabled = !parentId(state.selectedId);
+  els.clearSearch.classList.toggle("hidden", !state.query);
+}
+
+function renderTreeRows() {
+  state.rows = flattenTree();
+  if (!state.rows.length) {
+    els.list.innerHTML = `<div class="empty">No bookmarks yet.</div>`;
+    updateStatus(0, null);
+    return;
+  }
+
+  const html = state.rows
+    .map(({ node, depth }) => {
+      const folder = store.isFolder(node);
+      const selected = node.id === state.selectedId ? " selected" : "";
+      const twistie = folder ? (state.expanded.has(node.id) ? "▼" : "▶") : "";
+      const icon = folder ? folderIcon() : bookmarkIcon(node.url);
+      const title = escapeHtml(node.title || (folder ? "Untitled folder" : node.url));
+      const tip = escapeHtml(folder ? store.getPathLabel(node.id) || title : node.url || title);
+      return `<div class="row${selected}" data-id="${node.id}" data-kind="tree" title="${tip}" style="padding-left:${6 + depth * 12}px">
+        <span class="twistie">${twistie}</span>
+        ${icon}
+        <span class="title">${title}</span>
+      </div>`;
+    })
+    .join("");
+  els.list.innerHTML = html;
+  updateStatus(state.rows.length, null);
+}
+
+function renderResults() {
+  const { results, error } = searchBookmarks(
+    store,
+    state.query,
+    state.filters,
+    state.scopeFolderId
+  );
+  state.rows = results.map((item) => ({ kind: "result", node: item.node, path: item.path }));
+
+  if (error) {
+    els.list.innerHTML = `<div class="error-msg">${escapeHtml(error)}</div>`;
+    updateStatus(0, error);
+    return;
+  }
+  if (!results.length) {
+    els.list.innerHTML = `<div class="empty">No matching bookmarks or folders.</div>`;
+    updateStatus(0, null);
+    return;
+  }
+
+  if (state.selectedId && visibleIndex(state.selectedId) === -1) {
+    state.selectedId = results[0].node.id;
+  }
+
+  const html = results
+    .map(({ node, path }) => {
+      const folder = store.isFolder(node);
+      const selected = node.id === state.selectedId ? " selected" : "";
+      const icon = folder ? folderIcon() : bookmarkIcon(node.url);
+      const title = escapeHtml(node.title || (folder ? "Untitled folder" : node.url));
+      const meta = folder ? "Folder" : escapeHtml(node.url);
+      const pathLabel = escapeHtml(path || "Bookmarks");
+      const tip = escapeHtml(folder ? path || title : `${node.url || ""}\n${path || "Bookmarks"}`);
+      return `<div class="row result${selected}" data-id="${node.id}" data-kind="result" title="${tip}">
+        <div class="primary">${icon}<span class="title">${title}</span></div>
+        <div class="meta">${meta}</div>
+        <div class="path">${pathLabel}</div>
+      </div>`;
+    })
+    .join("");
+  els.list.innerHTML = html;
+  updateStatus(results.length, null);
+}
+
+function render({ scroll = false } = {}) {
+  applyFilterInputs();
+  if (isSearching()) {
+    renderResults();
+  } else {
+    renderTreeRows();
+  }
+
+  if (scroll && state.selectedId) {
+    const row = els.list.querySelector(`[data-id="${CSS.escape(state.selectedId)}"]`);
+    row?.scrollIntoView({ block: "nearest" });
+  }
+}
+
+function moveSelection(delta) {
+  if (!state.rows.length) {
+    return;
+  }
+  const current = visibleIndex(state.selectedId);
+  const next = current === -1 ? (delta > 0 ? 0 : state.rows.length - 1) : current + delta;
+  const clamped = Math.max(0, Math.min(state.rows.length - 1, next));
+  selectId(state.rows[clamped].node.id);
+}
+
+function setQuery(value, { immediate = false } = {}) {
+  const previous = state.query;
+  state.query = value;
+  els.search.value = value;
+
+  if (!previous.trim() && value.trim()) {
+    beginSearchSession();
+    state.revealMode = false;
+  }
+  if (previous.trim() && !value.trim()) {
+    endSearchSession();
+    persistSoon();
+  }
+  if (state.revealMode && value.trim() && value !== previous) {
+    state.revealMode = false;
+  }
+
+  const update = () => render({ scroll: true });
+  if (immediate) {
+    clearTimeout(searchTimer);
+    update();
+    return;
+  }
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(update, 60);
+}
+
+async function lastBrowserWindow() {
+  return chrome.windows.getLastFocused({ windowTypes: ["normal"] });
+}
+
+function bindEvents() {
+  els.search.addEventListener("input", (event) => {
+    if (!extensionAlive()) {
+      noteDeadContext();
+      return;
+    }
+    setQuery(event.target.value);
+  });
+
+  els.search.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (!state.rows.length) {
+        render();
+      }
+      if (state.rows.length) {
+        const first = state.rows[0].node.id;
+        selectId(first);
+        els.list.focus();
+      }
+    } else if (event.key === "Enter") {
+      const first = state.rows[0];
+      if (first) {
+        event.preventDefault();
+        activateNode(first.node, event, { fromResults: isSearching() });
+      }
+    } else if (event.key === "Escape" && state.query) {
+      event.preventDefault();
+      setQuery("", { immediate: true });
+    }
+  });
+
+  els.clearSearch.addEventListener("click", () => {
+    setQuery("", { immediate: true });
+    els.search.focus();
+  });
+
+  els.toggleFilters.addEventListener("click", () => {
+    state.filtersOpen = !state.filtersOpen;
+    persistSoon();
+    applyFilterInputs();
+  });
+
+  els.fontDown.addEventListener("click", async () => {
+    const prefs = await getPrefs();
+    const fontSize = clampFontSize((prefs.fontSize ?? FONT_DEFAULT) - 1);
+    await setPrefs({ fontSize });
+    applyFontSize(fontSize);
+  });
+
+  els.fontUp.addEventListener("click", async () => {
+    const prefs = await getPrefs();
+    const fontSize = clampFontSize((prefs.fontSize ?? FONT_DEFAULT) + 1);
+    await setPrefs({ fontSize });
+    applyFontSize(fontSize);
+  });
+
+  els.closePanel.addEventListener("click", async () => {
+    const win = await lastBrowserWindow();
+    if (win?.id != null && typeof chrome.sidePanel.close === "function") {
+      try {
+        await chrome.sidePanel.close({ windowId: win.id });
+        return;
+      } catch {
+        // Fall through to window.close().
+      }
+    }
+    window.close();
+  });
+
+  const onFilterChange = () => {
+    state.filters = {
+      field: els.field.value,
+      scope: els.scope.value,
+      match: els.match.value,
+      type: els.type.value,
+    };
+    persistSoon();
+    render({ scroll: true });
+  };
+  for (const select of [els.field, els.scope, els.match, els.type]) {
+    select.addEventListener("change", onFilterChange);
+  }
+
+  els.resetFilters.addEventListener("click", () => {
+    state.filters = { ...DEFAULT_FILTERS };
+    persistSoon();
+    render({ scroll: true });
+  });
+
+  els.goParent.addEventListener("click", () => {
+    goParentFolder();
+  });
+
+  els.list.addEventListener("click", (event) => {
+    const row = event.target.closest("[data-id]");
+    if (!row) {
+      return;
+    }
+    const node = store.get(row.dataset.id);
+    if (!node) {
+      return;
+    }
+    const twistie = event.target.closest(".twistie");
+    if (twistie && store.isFolder(node) && row.dataset.kind === "tree") {
+      activateNode(node, event);
+      return;
+    }
+    activateNode(node, event, { fromResults: row.dataset.kind === "result" });
+  });
+
+  els.list.addEventListener("mousedown", (event) => {
+    if (event.button === 1) {
+      event.preventDefault();
+    }
+  });
+
+  els.list.addEventListener("auxclick", (event) => {
+    if (event.button !== 1) {
+      return;
+    }
+    event.preventDefault();
+    const row = event.target.closest("[data-id]");
+    const node = row ? store.get(row.dataset.id) : null;
+    if (node && !store.isFolder(node)) {
+      openBookmark(node.url, "tab");
+    }
+  });
+
+  els.list.addEventListener("keydown", (event) => {
+    const node = store.get(state.selectedId);
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveSelection(1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      moveSelection(-1);
+      if (visibleIndex(state.selectedId) === 0) {
+        els.search.focus();
+        els.search.select();
+      }
+    } else if (event.key === "Enter" && node) {
+      event.preventDefault();
+      activateNode(node, event, { fromResults: isSearching() });
+    } else if (event.key === "ArrowRight" && node && store.isFolder(node) && !isSearching()) {
+      event.preventDefault();
+      state.expanded.add(node.id);
+      persistSoon();
+      render({ scroll: true });
+    } else if (event.key === "ArrowLeft" && !isSearching()) {
+      event.preventDefault();
+      if (node && store.isFolder(node) && state.expanded.has(node.id)) {
+        state.expanded.delete(node.id);
+        persistSoon();
+        selectId(node.id);
+      } else {
+        goParentFolder();
+      }
+    } else if (event.key === "Backspace" && (event.altKey || event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      goParentFolder();
+    } else if (event.key === "Escape") {
+      if (state.revealMode) {
+        state.revealMode = false;
+        render({ scroll: true });
+        els.search.focus();
+      } else if (state.query) {
+        setQuery("", { immediate: true });
+        els.search.focus();
+      }
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if ((event.altKey || event.ctrlKey || event.metaKey) && event.key === "ArrowUp") {
+      event.preventDefault();
+      goParentFolder();
+    }
+  });
+}
+
+async function init() {
+  bindEvents();
+  await loadPersisted();
+  applyFilterInputs();
+  store.onChange(() => {
+    if (state.selectedId && !store.get(state.selectedId)) {
+      state.selectedId = null;
+    }
+    const known = new Set(store.byId.keys());
+    state.expanded = new Set([...state.expanded].filter((id) => known.has(id)));
+    if (!state.expanded.size) {
+      state.expanded = defaultExpanded();
+    }
+    render({ scroll: Boolean(state.selectedId) });
+  });
+  store.subscribeToChrome();
+  try {
+    await store.load();
+    els.search.focus();
+  } catch (error) {
+    els.status.classList.add("error");
+    els.statusText.textContent = "Could not load bookmarks.";
+    els.list.innerHTML = `<div class="error-msg">${escapeHtml(error.message || String(error))}</div>`;
+  }
+}
+
+init();
