@@ -73,6 +73,10 @@ const state = {
 
 let persistTimer = 0;
 let searchTimer = 0;
+const drag = {
+  id: null,
+  active: false,
+};
 
 function folderIcon() {
   return `<svg class="folder-glyph icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M1.75 3.5h4.1l1.15 1.25H14.5v8.25H1.75z"/></svg>`;
@@ -80,7 +84,7 @@ function folderIcon() {
 
 function bookmarkIcon(url) {
   const src = faviconUrl(url, 16);
-  return `<img class="icon" src="${src}" alt="" width="16" height="16" />`;
+  return `<img class="icon" src="${src}" alt="" width="16" height="16" draggable="false" />`;
 }
 
 function escapeHtml(value) {
@@ -786,6 +790,63 @@ function openItemMenu(event, node) {
   });
 }
 
+function dropZone(event, node) {
+  const row = event.target.closest("[data-id]");
+  if (!row || !node) {
+    return null;
+  }
+  const rect = row.getBoundingClientRect();
+  const y = (event.clientY - rect.top) / Math.max(rect.height, 1);
+  if (store.isFolder(node)) {
+    if (y < 0.25) {
+      return "before";
+    }
+    if (y > 0.75) {
+      return "after";
+    }
+    return "into";
+  }
+  return y < 0.5 ? "before" : "after";
+}
+
+function clearDropMarks() {
+  for (const row of els.list.querySelectorAll(".drop-before, .drop-after, .drop-into")) {
+    row.classList.remove("drop-before", "drop-after", "drop-into");
+  }
+}
+
+function autoscrollList(event) {
+  const rect = els.list.getBoundingClientRect();
+  const edge = 28;
+  if (event.clientY < rect.top + edge) {
+    els.list.scrollTop -= 12;
+  } else if (event.clientY > rect.bottom - edge) {
+    els.list.scrollTop += 12;
+  }
+}
+
+function endDrag() {
+  clearDropMarks();
+  els.list.querySelector(".dragging")?.classList.remove("dragging");
+  drag.id = null;
+}
+
+async function moveDraggedTo(id, point) {
+  if (!id || !point) {
+    return;
+  }
+  await runBookmarkOp(async () => {
+    await chrome.bookmarks.move(
+      id,
+      point.index == null ? { parentId: point.parentId } : { parentId: point.parentId, index: point.index }
+    );
+    if (point.parentId) {
+      state.expanded.add(point.parentId);
+    }
+    selectCreated(id, point.parentId);
+  });
+}
+
 async function activateNode(node, event, { fromResults = false } = {}) {
   const folder = store.isFolder(node);
   if (fromResults) {
@@ -864,7 +925,8 @@ function renderTreeRows() {
       const icon = folder ? folderIcon() : bookmarkIcon(node.url);
       const title = escapeHtml(node.title || (folder ? "Untitled folder" : node.url));
       const tip = escapeHtml(folder ? store.getPathLabel(node.id) || title : node.url || title);
-      return `<div class="row${selected}" data-id="${node.id}" data-kind="tree" title="${tip}" style="padding-left:${6 + depth * 12}px">
+      const draggable = store.canRemove(node) ? "true" : "false";
+      return `<div class="row${selected}" data-id="${node.id}" data-kind="tree" draggable="${draggable}" title="${tip}" style="padding-left:${6 + depth * 12}px">
         <span class="twistie">${twistie}</span>
         ${icon}
         <span class="title">${title}</span>
@@ -1087,6 +1149,11 @@ function bindEvents() {
   });
 
   els.list.addEventListener("click", (event) => {
+    if (drag.active) {
+      drag.active = false;
+      event.preventDefault();
+      return;
+    }
     const row = event.target.closest("[data-id]");
     if (!row) {
       return;
@@ -1101,6 +1168,65 @@ function bindEvents() {
       return;
     }
     activateNode(node, event, { fromResults: row.dataset.kind === "result" });
+  });
+
+  els.list.addEventListener("dragstart", (event) => {
+    const row = event.target.closest("[data-id]");
+    const node = row ? store.get(row.dataset.id) : null;
+    if (!row || row.dataset.kind !== "tree" || !store.canRemove(node)) {
+      event.preventDefault();
+      return;
+    }
+    contextMenu.close();
+    drag.id = node.id;
+    drag.active = true;
+    event.dataTransfer.setData("text/plain", node.id);
+    event.dataTransfer.effectAllowed = "move";
+    row.classList.add("dragging");
+  });
+
+  els.list.addEventListener("dragover", (event) => {
+    if (!drag.id) {
+      return;
+    }
+    autoscrollList(event);
+    const row = event.target.closest("[data-id]");
+    const node = row ? store.get(row.dataset.id) : null;
+    const zone = dropZone(event, node);
+    const point = store.dropPoint(drag.id, node, zone);
+    clearDropMarks();
+    if (!point) {
+      event.dataTransfer.dropEffect = "none";
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    row.classList.add(`drop-${zone}`);
+  });
+
+  els.list.addEventListener("dragleave", (event) => {
+    if (!els.list.contains(event.relatedTarget)) {
+      clearDropMarks();
+    }
+  });
+
+  els.list.addEventListener("drop", (event) => {
+    event.preventDefault();
+    const row = event.target.closest("[data-id]");
+    const node = row ? store.get(row.dataset.id) : null;
+    const id = drag.id;
+    const point = store.dropPoint(id, node, dropZone(event, node));
+    endDrag();
+    if (point) {
+      moveDraggedTo(id, point);
+    }
+  });
+
+  els.list.addEventListener("dragend", () => {
+    endDrag();
+    setTimeout(() => {
+      drag.active = false;
+    }, 0);
   });
 
   els.list.addEventListener("mousedown", (event) => {

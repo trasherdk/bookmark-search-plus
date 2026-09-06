@@ -243,6 +243,27 @@ body {
   white-space: nowrap;
 }
 
+.row[draggable="true"] {
+  cursor: grab;
+}
+
+.row.dragging {
+  opacity: 0.4;
+}
+
+.row.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.row.drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.row.drop-into {
+  background: var(--selected);
+  color: var(--selected-text);
+}
+
 .row:hover {
   background: var(--hover);
 }
@@ -265,6 +286,7 @@ body {
   height: 16px;
   margin-right: 6px;
   flex: 0 0 16px;
+  -webkit-user-drag: none;
 }
 
 .row .title {

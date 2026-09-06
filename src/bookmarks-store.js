@@ -213,6 +213,27 @@ export class BookmarkStore {
       return !this.isDescendantOf(folderId, id);
     });
   }
+
+  dropPoint(dragId, overNode, zone) {
+    const dragNode = this.get(dragId);
+    if (!dragNode || !overNode || !this.canRemove(dragNode) || dragId === overNode.id) {
+      return null;
+    }
+    if (this.isDescendantOf(overNode.id, dragId)) {
+      return null;
+    }
+    if (zone === "into") {
+      return this.canMoveInto([dragId], overNode.id) ? { parentId: overNode.id } : null;
+    }
+    if (this.isSystemRoot(overNode) || !this.canAddTo(overNode.parentId)) {
+      return null;
+    }
+    if (!this.canMoveInto([dragId], overNode.parentId)) {
+      return null;
+    }
+    const index = zone === "before" ? (overNode.index ?? 0) : (overNode.index ?? 0) + 1;
+    return { parentId: overNode.parentId, index };
+  }
 }
 
 export function faviconUrl(pageUrl, size = 16) {
