@@ -68,10 +68,19 @@
 
     <div id="status" class="status">
       <span id="status-text">Loading bookmarks…</span>
-      <button id="go-parent" class="text-btn" type="button" disabled>Parent</button>
+      <div class="status-actions">
+        <button id="add-page" class="text-btn" type="button" title="Bookmark the current page">
+          Add page
+        </button>
+        <button id="remove-item" class="text-btn" type="button" disabled title="Remove the selected item">
+          Remove
+        </button>
+        <button id="go-parent" class="text-btn" type="button" disabled>Parent</button>
+      </div>
     </div>
 
     <main id="list" class="list" tabindex="-1"></main>
+    <div id="ctx-root"></div>
 
     <script type="module" src="sidepanel.js"></script>
   </body>
