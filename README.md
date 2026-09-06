@@ -11,7 +11,7 @@ This is an original Manifest V3 implementation inspired by that UX, not a source
 3. If this extension is already listed, click **Remove** first
 4. Click **Load unpacked**
 5. Choose this folder: `bookmark-search-plus`
-6. Confirm the version is **1.4.1**
+6. Confirm the version is **1.6.0**
 7. Pin the toolbar icon (amber star)
 
 Click the icon, or press **Ctrl+Shift+.** (macOS: **Command+Shift+.**), to open the side panel. Drag its edge to resize.
@@ -29,6 +29,15 @@ Browse folders like the native bookmarks sidebar. Click a folder to expand or co
 Type in the box. Results include folders, not just bookmarks. Each result shows its title, URL (or “Folder”), and the parent path (`Work / Docs / Specs`).
 
 Click a result to expand the tree to that item. Bookmarks also open. Clear the search box to restore the folders you had open before you searched.
+
+**Add current page**  
+Use **Add page** in the status bar, or **Ctrl+D** (macOS: **Command+D**). The bookmark goes in the selected folder, or in the parent folder of a selected bookmark. If nothing is selected, it goes in the bookmarks bar. Internal pages such as `brave://` cannot be bookmarked.
+
+**Remove**  
+Select an item, then use **Remove**, **Delete** when the list is focused, or **Delete** on the right-click menu. Bookmarks are removed on their own. Removing a folder deletes that folder and every bookmark and folder inside it. The bookmarks bar and other built-in roots cannot be removed.
+
+**Right-click menu**  
+Right-click a row for the same kind of menu as Bookmark search plus 2: open all in tabs, go parent, bookmark the highlighted tab(s) here, new bookmark/folder, cut/copy/paste, delete, sort by name, properties, and a bookmark-path submenu. **Advanced** expands or collapses a whole folder branch, opens all bookmarks in a new window, or copies a URL. **New Separator** is shown but disabled — Brave and Chrome have no bookmark separators.
 
 **Go parent folder**  
 Select an item, then use the status-bar button, **Alt+Up**, or **Left** on a collapsed folder to jump to the enclosing folder.
@@ -62,12 +71,16 @@ Open the gear control next to the search box.
 | Down from the search box | Jump to the first result or tree row |
 | Up / Down | Move the selection |
 | Enter | Open a bookmark, or expand/collapse a folder |
+| Right-click | Open the bookmark menu |
 | Right / Left | Expand / collapse a folder |
-| Escape | Leave “showing in tree”, or clear the search |
+| Shift+Right / Shift+Left | Expand / collapse a whole folder branch |
+| Escape | Close the menu, leave “showing in tree”, or clear the search |
+| Ctrl+D / Command+D | Bookmark the current page |
+| Delete | Remove the selected bookmark or folder (asks first) |
 
 ## Permissions
 
-- **Bookmarks** — read the bookmark tree and keep it in sync
+- **Bookmarks** — read the tree, add pages, create folders, move items, and remove items
 - **Side panel** — dock beside the page
 - **Tabs** — open a result in the current tab, a new tab, or a new window
 - **Favicon** — show site icons already cached by the browser
@@ -77,4 +90,4 @@ Bookmarks are not uploaded. Nothing leaves the browser.
 
 ## Out of scope (v1)
 
-Drag-and-drop, edit/delete, undo history, and a full context menu are not included yet.
+Drag-and-drop and undo history are not included yet.

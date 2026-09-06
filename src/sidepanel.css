@@ -201,6 +201,24 @@ body {
   font-size: 11px;
 }
 
+#status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+#remove-item:hover:not(:disabled) {
+  color: var(--danger);
+}
+
 .status.error {
   color: var(--danger);
 }
@@ -289,4 +307,115 @@ body {
   width: 16px;
   height: 16px;
   display: block;
+}
+
+.ctx-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 198px;
+  max-width: min(260px, calc(100vw - 8px));
+  padding: 4px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+}
+
+.ctx-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 5px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+
+.ctx-item:hover:not(:disabled),
+.ctx-item:focus-visible:not(:disabled) {
+  background: var(--hover);
+  outline: none;
+}
+
+.ctx-item:disabled {
+  opacity: 0.4;
+}
+
+.ctx-item u {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ctx-caret {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.ctx-sep {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border);
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  background: rgb(0 0 0 / 40%);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(300px, 100%);
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+}
+
+.dialog h2 {
+  margin: 0 0 2px;
+  font-size: 13px;
+}
+
+.dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.dialog input {
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.dialog-ok {
+  color: var(--accent);
 }

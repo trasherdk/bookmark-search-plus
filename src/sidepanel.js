@@ -1,4 +1,6 @@
 import { BookmarkStore, faviconUrl } from "./bookmarks-store.js";
+import { ContextMenu } from "./context-menu.js";
+import { openFormDialog } from "./dialogs.js";
 import { clampFontSize, extensionAlive, FONT_DEFAULT, getPrefs, isContextInvalidated, setPrefs } from "./prefs.js";
 import { DEFAULT_FILTERS, filtersAreDefault, searchBookmarks } from "./search.js";
 
@@ -20,8 +22,11 @@ const els = {
   resetFilters: document.getElementById("reset-filters"),
   status: document.getElementById("status"),
   statusText: document.getElementById("status-text"),
+  addPage: document.getElementById("add-page"),
+  removeItem: document.getElementById("remove-item"),
   goParent: document.getElementById("go-parent"),
   list: document.getElementById("list"),
+  ctxRoot: document.getElementById("ctx-root"),
 };
 
 function noteDeadContext() {
@@ -47,6 +52,11 @@ window.addEventListener("error", (event) => {
 });
 
 const store = new BookmarkStore();
+const contextMenu = new ContextMenu(els.ctxRoot);
+const clipboard = {
+  ids: [],
+  mode: null,
+};
 
 const state = {
   query: "",
@@ -58,6 +68,7 @@ const state = {
   selectedId: null,
   revealMode: false,
   rows: [],
+  actionError: null,
 };
 
 let persistTimer = 0;
@@ -242,6 +253,539 @@ function goParentFolder() {
   revealInTree(target);
 }
 
+function canBookmarkUrl(url) {
+  if (!url) {
+    return false;
+  }
+  try {
+    const protocol = new URL(url).protocol;
+    return protocol === "http:" || protocol === "https:" || protocol === "ftp:" || protocol === "file:";
+  } catch {
+    return false;
+  }
+}
+
+function isEditableTarget(target) {
+  const tag = target?.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
+async function addCurrentPage() {
+  if (!extensionAlive()) {
+    noteDeadContext();
+    return;
+  }
+  state.actionError = null;
+  const tab = await activeBrowserTab();
+  if (!canBookmarkUrl(tab?.url)) {
+    state.actionError = "This page cannot be bookmarked.";
+    render();
+    return;
+  }
+  const folderId = store.addTargetFolderId(state.selectedId);
+  if (!folderId) {
+    state.actionError = "No folder to add the bookmark to.";
+    render();
+    return;
+  }
+  try {
+    const created = await chrome.bookmarks.create({
+      parentId: folderId,
+      title: (tab.title || "").trim() || tab.url,
+      url: tab.url,
+    });
+    if (state.query.trim()) {
+      beginSearchSession();
+      state.revealMode = true;
+    }
+    expandAncestors(created.id);
+    state.expanded.add(folderId);
+    state.selectedId = created.id;
+    persistSoon();
+  } catch (error) {
+    if (isContextInvalidated(error)) {
+      noteDeadContext();
+      return;
+    }
+    state.actionError = error.message || "Could not add this page.";
+    render();
+  }
+}
+
+async function removeSelected() {
+  if (!extensionAlive()) {
+    noteDeadContext();
+    return;
+  }
+  const node = store.get(state.selectedId);
+  if (!store.canRemove(node)) {
+    return;
+  }
+  const folder = store.isFolder(node);
+  const title = node.title || (folder ? "Untitled folder" : node.url);
+  let message;
+  if (folder) {
+    const count = store.countChildren(node);
+    message = count
+      ? `Remove folder “${title}” and all ${count} item${count === 1 ? "" : "s"} inside?`
+      : `Remove empty folder “${title}”?`;
+  } else {
+    message = `Remove bookmark “${title}”?`;
+  }
+  if (!window.confirm(message)) {
+    return;
+  }
+  state.actionError = null;
+  const nextId = parentId(node.id);
+  try {
+    if (folder) {
+      await chrome.bookmarks.removeTree(node.id);
+    } else {
+      await chrome.bookmarks.remove(node.id);
+    }
+    state.selectedId = nextId;
+    state.expanded.delete(node.id);
+  } catch (error) {
+    if (isContextInvalidated(error)) {
+      noteDeadContext();
+      return;
+    }
+    state.actionError = error.message || "Could not remove this item.";
+    render();
+  }
+}
+
+function clipboardNodes() {
+  return clipboard.ids.map((id) => store.get(id)).filter(Boolean);
+}
+
+function setActionError(message) {
+  state.actionError = message;
+  render();
+}
+
+async function runBookmarkOp(work) {
+  if (!extensionAlive()) {
+    noteDeadContext();
+    return;
+  }
+  state.actionError = null;
+  try {
+    await work();
+  } catch (error) {
+    if (isContextInvalidated(error)) {
+      noteDeadContext();
+      return;
+    }
+    setActionError(error.message || "Bookmark action failed.");
+  }
+}
+
+function selectCreated(id, folderId) {
+  if (state.query.trim()) {
+    beginSearchSession();
+    state.revealMode = true;
+  }
+  expandAncestors(id);
+  if (folderId) {
+    state.expanded.add(folderId);
+  }
+  state.selectedId = id;
+  persistSoon();
+}
+
+async function openUrls(urls, mode) {
+  if (!urls.length) {
+    return;
+  }
+  if (mode === "window") {
+    const win = await chrome.windows.create({ url: urls[0] });
+    for (const url of urls.slice(1)) {
+      await chrome.tabs.create({ url, windowId: win?.id, active: false });
+    }
+    return;
+  }
+  const tab = await activeBrowserTab();
+  let index = tab != null ? tab.index + 1 : undefined;
+  for (const [i, url] of urls.entries()) {
+    await chrome.tabs.create({
+      url,
+      windowId: tab?.windowId,
+      index,
+      openerTabId: tab?.id,
+      active: i === 0,
+    });
+    if (index != null) {
+      index += 1;
+    }
+  }
+}
+
+async function cloneNode(node, parentId, index) {
+  const children = [...(node.children ?? [])];
+  const created = await chrome.bookmarks.create({
+    parentId,
+    title: node.title || "",
+    ...(node.url ? { url: node.url } : {}),
+    ...(index == null ? {} : { index }),
+  });
+  for (const child of children) {
+    await cloneNode(child, created.id);
+  }
+  return created;
+}
+
+async function pasteAt(point) {
+  const nodes = clipboardNodes();
+  if (!point || !nodes.length) {
+    return;
+  }
+  if (clipboard.mode === "cut" && !store.canMoveInto(clipboard.ids, point.parentId)) {
+    setActionError("Cannot paste into that folder.");
+    return;
+  }
+  await runBookmarkOp(async () => {
+    let lastId = null;
+    for (let i = 0; i < nodes.length; i += 1) {
+      const destIndex = point.index == null ? undefined : point.index + i;
+      if (clipboard.mode === "cut") {
+        const moved = await chrome.bookmarks.move(nodes[i].id, {
+          parentId: point.parentId,
+          ...(destIndex == null ? {} : { index: destIndex }),
+        });
+        lastId = moved.id;
+      } else {
+        const created = await cloneNode(nodes[i], point.parentId, destIndex);
+        lastId = created.id;
+      }
+    }
+    if (clipboard.mode === "cut") {
+      clipboard.ids = [];
+      clipboard.mode = null;
+    }
+    if (lastId) {
+      selectCreated(lastId, point.parentId);
+    }
+  });
+}
+
+async function bookmarkTabsHere(node) {
+  const point = store.insertPoint(node);
+  if (!point) {
+    setActionError("No folder to add bookmarks to.");
+    return;
+  }
+  const tab = await activeBrowserTab();
+  if (!tab?.windowId) {
+    setActionError("No browser tab to bookmark.");
+    return;
+  }
+  const tabs = await chrome.tabs.query({ windowId: tab.windowId, highlighted: true });
+  const pages = tabs.filter((item) => canBookmarkUrl(item.url));
+  if (!pages.length) {
+    setActionError("Selected tabs cannot be bookmarked.");
+    return;
+  }
+  await runBookmarkOp(async () => {
+    let lastId = null;
+    for (let i = 0; i < pages.length; i += 1) {
+      const created = await chrome.bookmarks.create({
+        parentId: point.parentId,
+        title: (pages[i].title || "").trim() || pages[i].url,
+        url: pages[i].url,
+        ...(point.index == null ? {} : { index: point.index + i }),
+      });
+      lastId = created.id;
+    }
+    if (lastId) {
+      selectCreated(lastId, point.parentId);
+    }
+  });
+}
+
+async function newBookmark(node) {
+  const point = store.insertPoint(node);
+  if (!point) {
+    setActionError("No folder to add a bookmark to.");
+    return;
+  }
+  const tab = await activeBrowserTab();
+  const result = await openFormDialog({
+    title: "New bookmark",
+    submitLabel: "Add",
+    fields: [
+      { name: "title", label: "Name", value: canBookmarkUrl(tab?.url) ? tab.title || "" : "" },
+      { name: "url", label: "URL", value: canBookmarkUrl(tab?.url) ? tab.url : "https://", required: true },
+    ],
+  });
+  if (!result) {
+    return;
+  }
+  if (!canBookmarkUrl(result.url)) {
+    setActionError("That URL cannot be bookmarked.");
+    return;
+  }
+  await runBookmarkOp(async () => {
+    const created = await chrome.bookmarks.create({
+      parentId: point.parentId,
+      title: result.title || result.url,
+      url: result.url,
+      ...(point.index == null ? {} : { index: point.index }),
+    });
+    selectCreated(created.id, point.parentId);
+  });
+}
+
+async function newFolder(node) {
+  const point = store.insertPoint(node);
+  if (!point) {
+    setActionError("No folder to add a folder to.");
+    return;
+  }
+  const result = await openFormDialog({
+    title: "New folder",
+    submitLabel: "Add",
+    fields: [{ name: "title", label: "Name", value: "New folder", required: true }],
+  });
+  if (!result) {
+    return;
+  }
+  await runBookmarkOp(async () => {
+    const created = await chrome.bookmarks.create({
+      parentId: point.parentId,
+      title: result.title || "New folder",
+      ...(point.index == null ? {} : { index: point.index }),
+    });
+    selectCreated(created.id, point.parentId);
+  });
+}
+
+async function editProperties(node) {
+  if (!node) {
+    return;
+  }
+  const folder = store.isFolder(node);
+  const locked = store.isSystemRoot(node) || Boolean(node.unmodifiable);
+  const result = await openFormDialog({
+    title: "Properties",
+    fields: [
+      { name: "title", label: "Name", value: node.title || "", readonly: locked },
+      ...(!folder ? [{ name: "url", label: "URL", value: node.url || "", readonly: locked, required: true }] : []),
+    ],
+  });
+  if (!result || locked) {
+    return;
+  }
+  if (!folder && !canBookmarkUrl(result.url)) {
+    setActionError("That URL cannot be bookmarked.");
+    return;
+  }
+  await runBookmarkOp(async () => {
+    await chrome.bookmarks.update(node.id, {
+      title: result.title || (folder ? "Untitled folder" : result.url),
+      ...(!folder ? { url: result.url } : {}),
+    });
+    state.selectedId = node.id;
+  });
+}
+
+async function sortByName(node) {
+  const folderId = store.isFolder(node) ? node.id : node?.parentId;
+  const folder = store.get(folderId);
+  if (!folder || !store.canAddTo(folderId)) {
+    return;
+  }
+  const children = [...(folder.children ?? [])];
+  if (children.length < 2) {
+    return;
+  }
+  children.sort((a, b) => (a.title || a.url || "").localeCompare(b.title || b.url || "", undefined, { sensitivity: "base" }));
+  await runBookmarkOp(async () => {
+    for (let i = 0; i < children.length; i += 1) {
+      await chrome.bookmarks.move(children[i].id, { parentId: folderId, index: i });
+    }
+    state.selectedId = node.id;
+  });
+}
+
+function setBranchExpanded(node, expanded) {
+  if (!node || !store.isFolder(node)) {
+    return;
+  }
+  for (const id of store.folderIdsInBranch(node)) {
+    if (expanded) {
+      state.expanded.add(id);
+    } else {
+      state.expanded.delete(id);
+    }
+  }
+  if (!expanded && store.isSystemRoot(node)) {
+    state.expanded.add(node.id);
+  }
+  persistSoon();
+  render({ scroll: true });
+}
+
+async function copyUrl(node) {
+  if (!node?.url) {
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(node.url);
+  } catch {
+    setActionError("Could not copy the URL.");
+  }
+}
+
+function buildContextItems(node) {
+  const folder = store.isFolder(node);
+  const canRemove = store.canRemove(node);
+  const insert = store.insertPoint(node);
+  const before = store.pasteBeforePoint(node);
+  const liveClip = clipboardNodes();
+  const pasteOk = (parentId) => {
+    if (!liveClip.length || !parentId) {
+      return false;
+    }
+    return clipboard.mode === "cut" ? store.canMoveInto(clipboard.ids, parentId) : store.canAddTo(parentId);
+  };
+  const canPasteInto = folder && pasteOk(node.id);
+  const canPasteBefore = Boolean(before) && pasteOk(before.parentId);
+  const childUrls = folder ? store.directBookmarkUrls(node) : [];
+  const sortFolder = folder ? node : store.get(node?.parentId);
+  const canSort = Boolean(sortFolder && store.canAddTo(sortFolder.id) && (sortFolder.children?.length ?? 0) > 1);
+  const ancestors = node ? store.getAncestors(node.id) : [];
+
+  const first = folder
+    ? { id: "open-all", label: "Open All in Tabs", accessKey: "O", disabled: childUrls.length === 0 }
+    : { id: "open", label: "Open", accessKey: "O", disabled: !node?.url };
+
+  return [
+    first,
+    { type: "separator" },
+    { id: "go-parent", label: "Go Parent Folder", accessKey: "G", disabled: !parentId(node?.id) },
+    { type: "separator" },
+    { id: "bookmark-here", label: "Bookmark Tab(s) Here", accessKey: "H", disabled: !insert },
+    { id: "new-bookmark", label: "New Bookmark…", accessKey: "B", disabled: !insert },
+    { id: "new-folder", label: "New Folder…", accessKey: "F", disabled: !insert },
+    {
+      id: "new-separator",
+      label: "New Separator",
+      accessKey: "S",
+      disabled: true,
+      title: "Brave and Chrome do not support bookmark separators.",
+    },
+    { type: "separator" },
+    { id: "cut", label: "Cut", accessKey: "t", disabled: !canRemove },
+    { id: "copy", label: "Copy", accessKey: "C", disabled: !node || store.isSystemRoot(node) },
+    { id: "paste-before", label: "Paste Before", accessKey: "P", disabled: !canPasteBefore },
+    { id: "paste-into", label: "Paste Into", accessKey: "I", disabled: !canPasteInto },
+    { type: "separator" },
+    { id: "delete", label: "Delete", accessKey: "D", disabled: !canRemove },
+    { type: "separator" },
+    { id: "sort", label: "Sort by Name", accessKey: "r", disabled: !canSort },
+    { type: "separator" },
+    {
+      id: "advanced",
+      label: "Advanced",
+      accessKey: "v",
+      submenu: folder
+        ? [
+            { id: "expand-branch", label: "Expand all in branch", accessKey: "E" },
+            { id: "collapse-branch", label: "Collapse all in branch", accessKey: "L" },
+            { id: "open-all-window", label: "Open all in new window", accessKey: "W", disabled: childUrls.length === 0 },
+          ]
+        : [{ id: "copy-url", label: "Copy URL", accessKey: "U", disabled: !node?.url }],
+    },
+    { id: "properties", label: "Properties…", accessKey: "i", disabled: !node },
+    {
+      id: "path",
+      label: "Bookmark path",
+      accessKey: "a",
+      submenu: ancestors.length
+        ? ancestors.map((item) => ({
+            id: `path:${item.id}`,
+            label: item.title || "Untitled",
+          }))
+        : [{ id: "path-none", label: "No parent folders", disabled: true }],
+    },
+  ];
+}
+
+async function handleContextAction(action, node) {
+  if (action.startsWith("path:")) {
+    revealInTree(action.slice(5));
+    return;
+  }
+  switch (action) {
+    case "open":
+      await openBookmark(node?.url, "tab");
+      break;
+    case "open-all":
+      await openUrls(store.directBookmarkUrls(node), "tab");
+      break;
+    case "open-all-window":
+      await openUrls(store.directBookmarkUrls(node), "window");
+      break;
+    case "go-parent":
+      goParentFolder();
+      break;
+    case "bookmark-here":
+      await bookmarkTabsHere(node);
+      break;
+    case "new-bookmark":
+      await newBookmark(node);
+      break;
+    case "new-folder":
+      await newFolder(node);
+      break;
+    case "cut":
+      if (store.canRemove(node)) {
+        clipboard.ids = [node.id];
+        clipboard.mode = "cut";
+      }
+      break;
+    case "copy":
+      if (node && !store.isSystemRoot(node)) {
+        clipboard.ids = [node.id];
+        clipboard.mode = "copy";
+      }
+      break;
+    case "paste-before":
+      await pasteAt(store.pasteBeforePoint(node));
+      break;
+    case "paste-into":
+      await pasteAt(store.isFolder(node) ? { parentId: node.id, index: undefined } : null);
+      break;
+    case "delete":
+      await removeSelected();
+      break;
+    case "sort":
+      await sortByName(node);
+      break;
+    case "expand-branch":
+      setBranchExpanded(node, true);
+      break;
+    case "collapse-branch":
+      setBranchExpanded(node, false);
+      break;
+    case "copy-url":
+      await copyUrl(node);
+      break;
+    case "properties":
+      await editProperties(node);
+      break;
+    default:
+      break;
+  }
+}
+
+function openItemMenu(event, node) {
+  contextMenu.show(event.clientX, event.clientY, buildContextItems(node), (action) => {
+    handleContextAction(action, node);
+  });
+}
+
 async function activateNode(node, event, { fromResults = false } = {}) {
   const folder = store.isFolder(node);
   if (fromResults) {
@@ -279,9 +823,10 @@ function applyFilterInputs() {
 }
 
 function updateStatus(resultCount, error) {
-  els.status.classList.toggle("error", Boolean(error));
-  if (error) {
-    els.statusText.textContent = error;
+  const shownError = error || state.actionError;
+  els.status.classList.toggle("error", Boolean(shownError));
+  if (shownError) {
+    els.statusText.textContent = shownError;
   } else if (isSearching()) {
     els.statusText.textContent =
       resultCount === 1 ? "1 match" : `${resultCount} matches`;
@@ -293,6 +838,13 @@ function updateStatus(resultCount, error) {
   }
 
   els.goParent.disabled = !parentId(state.selectedId);
+  els.removeItem.disabled = !store.canRemove(store.get(state.selectedId));
+  const folderId = store.addTargetFolderId(state.selectedId);
+  const folder = folderId ? store.get(folderId) : null;
+  const folderLabel = folder
+    ? [...store.getPathTitles(folder.id), folder.title || "Untitled"].join(" / ")
+    : "Bookmarks";
+  els.addPage.title = `Bookmark the current page in ${folderLabel}`;
   els.clearSearch.classList.toggle("hidden", !state.query);
 }
 
@@ -512,8 +1064,26 @@ function bindEvents() {
     render({ scroll: true });
   });
 
+  els.addPage.addEventListener("click", () => {
+    addCurrentPage();
+  });
+
+  els.removeItem.addEventListener("click", () => {
+    removeSelected();
+  });
+
   els.goParent.addEventListener("click", () => {
     goParentFolder();
+  });
+
+  els.list.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    const row = event.target.closest("[data-id]");
+    const node = row ? store.get(row.dataset.id) : store.get(store.addTargetFolderId(state.selectedId));
+    if (row && node) {
+      selectId(node.id, { scroll: false });
+    }
+    openItemMenu(event, node);
   });
 
   els.list.addEventListener("click", (event) => {
@@ -568,11 +1138,19 @@ function bindEvents() {
       activateNode(node, event, { fromResults: isSearching() });
     } else if (event.key === "ArrowRight" && node && store.isFolder(node) && !isSearching()) {
       event.preventDefault();
+      if (event.shiftKey) {
+        setBranchExpanded(node, true);
+        return;
+      }
       state.expanded.add(node.id);
       persistSoon();
       render({ scroll: true });
     } else if (event.key === "ArrowLeft" && !isSearching()) {
       event.preventDefault();
+      if (event.shiftKey && node && store.isFolder(node)) {
+        setBranchExpanded(node, false);
+        return;
+      }
       if (node && store.isFolder(node) && state.expanded.has(node.id)) {
         state.expanded.delete(node.id);
         persistSoon();
@@ -599,6 +1177,12 @@ function bindEvents() {
     if ((event.altKey || event.ctrlKey || event.metaKey) && event.key === "ArrowUp") {
       event.preventDefault();
       goParentFolder();
+    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d") {
+      event.preventDefault();
+      addCurrentPage();
+    } else if (event.key === "Delete" && !event.altKey && !isEditableTarget(event.target)) {
+      event.preventDefault();
+      removeSelected();
     }
   });
 }
@@ -608,6 +1192,8 @@ async function init() {
   await loadPersisted();
   applyFilterInputs();
   store.onChange(() => {
+    contextMenu.close();
+    state.actionError = null;
     if (state.selectedId && !store.get(state.selectedId)) {
       state.selectedId = null;
     }
