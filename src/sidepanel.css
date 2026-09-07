@@ -227,6 +227,7 @@ body {
   flex: 1;
   overflow: auto;
   outline: none;
+  touch-action: pan-y;
 }
 
 .hidden {
@@ -243,8 +244,9 @@ body {
   white-space: nowrap;
 }
 
-.row[draggable="true"] {
-  cursor: grab;
+html.is-dragging,
+html.is-dragging * {
+  cursor: grabbing !important;
 }
 
 .row.dragging {

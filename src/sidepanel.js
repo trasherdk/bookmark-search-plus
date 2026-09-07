@@ -73,9 +73,15 @@ const state = {
 
 let persistTimer = 0;
 let searchTimer = 0;
+const DRAG_HOLD_MS = 200;
+const DRAG_MOVE_PX = 8;
 const drag = {
   id: null,
   active: false,
+  pointerId: null,
+  startX: 0,
+  startY: 0,
+  holdTimer: 0,
 };
 
 function folderIcon() {
@@ -790,23 +796,28 @@ function openItemMenu(event, node) {
   });
 }
 
-function dropZone(event, node) {
-  const row = event.target.closest("[data-id]");
+function dropTargetAt(clientX, clientY) {
+  const el = document.elementFromPoint(clientX, clientY);
+  const row = el?.closest?.("#list [data-id]") ?? null;
+  const node = row ? store.get(row.dataset.id) : null;
   if (!row || !node) {
-    return null;
+    return { row: null, node: null, zone: null };
   }
   const rect = row.getBoundingClientRect();
-  const y = (event.clientY - rect.top) / Math.max(rect.height, 1);
+  const y = (clientY - rect.top) / Math.max(rect.height, 1);
+  let zone;
   if (store.isFolder(node)) {
     if (y < 0.25) {
-      return "before";
+      zone = "before";
+    } else if (y > 0.75) {
+      zone = "after";
+    } else {
+      zone = "into";
     }
-    if (y > 0.75) {
-      return "after";
-    }
-    return "into";
+  } else {
+    zone = y < 0.5 ? "before" : "after";
   }
-  return y < 0.5 ? "before" : "after";
+  return { row, node, zone };
 }
 
 function clearDropMarks() {
@@ -825,10 +836,48 @@ function autoscrollList(event) {
   }
 }
 
+function resetDragCursor() {
+  document.documentElement.classList.remove("is-dragging");
+  document.documentElement.style.cursor = "default";
+  document.body.style.cursor = "default";
+  requestAnimationFrame(() => {
+    document.documentElement.style.cursor = "";
+    document.body.style.cursor = "";
+  });
+}
+
+function clearHoldTimer() {
+  clearTimeout(drag.holdTimer);
+  drag.holdTimer = 0;
+}
+
+function beginDrag() {
+  if (drag.active || !drag.id) {
+    return;
+  }
+  contextMenu.close();
+  drag.active = true;
+  document.documentElement.classList.add("is-dragging");
+  els.list.querySelector(`[data-id="${CSS.escape(drag.id)}"]`)?.classList.add("dragging");
+}
+
+function updateDropMarks(event) {
+  autoscrollList(event);
+  const { row, node, zone } = dropTargetAt(event.clientX, event.clientY);
+  const point = store.dropPoint(drag.id, node, zone);
+  clearDropMarks();
+  if (point && row) {
+    row.classList.add(`drop-${zone}`);
+  }
+}
+
 function endDrag() {
+  clearHoldTimer();
   clearDropMarks();
   els.list.querySelector(".dragging")?.classList.remove("dragging");
   drag.id = null;
+  drag.pointerId = null;
+  resetDragCursor();
 }
 
 async function moveDraggedTo(id, point) {
@@ -845,6 +894,7 @@ async function moveDraggedTo(id, point) {
     }
     selectCreated(id, point.parentId);
   });
+  resetDragCursor();
 }
 
 async function activateNode(node, event, { fromResults = false } = {}) {
@@ -925,8 +975,7 @@ function renderTreeRows() {
       const icon = folder ? folderIcon() : bookmarkIcon(node.url);
       const title = escapeHtml(node.title || (folder ? "Untitled folder" : node.url));
       const tip = escapeHtml(folder ? store.getPathLabel(node.id) || title : node.url || title);
-      const draggable = store.canRemove(node) ? "true" : "false";
-      return `<div class="row${selected}" data-id="${node.id}" data-kind="tree" draggable="${draggable}" title="${tip}" style="padding-left:${6 + depth * 12}px">
+      return `<div class="row${selected}" data-id="${node.id}" data-kind="tree" title="${tip}" style="padding-left:${6 + depth * 12}px">
         <span class="twistie">${twistie}</span>
         ${icon}
         <span class="title">${title}</span>
@@ -1150,7 +1199,6 @@ function bindEvents() {
 
   els.list.addEventListener("click", (event) => {
     if (drag.active) {
-      drag.active = false;
       event.preventDefault();
       return;
     }
@@ -1170,63 +1218,73 @@ function bindEvents() {
     activateNode(node, event, { fromResults: row.dataset.kind === "result" });
   });
 
-  els.list.addEventListener("dragstart", (event) => {
+  const onPointerMove = (event) => {
+    if (event.pointerId !== drag.pointerId) {
+      return;
+    }
+    if (!drag.active) {
+      const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+      if (distance < DRAG_MOVE_PX) {
+        return;
+      }
+      clearHoldTimer();
+      beginDrag();
+    }
+    if (!drag.active) {
+      return;
+    }
+    event.preventDefault();
+    updateDropMarks(event);
+  };
+
+  const onPointerUp = (event) => {
+    if (event.pointerId !== drag.pointerId) {
+      return;
+    }
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", onPointerUp);
+    window.removeEventListener("pointercancel", onPointerUp);
+    const wasDragging = drag.active;
+    const id = drag.id;
+    const { node, zone } = dropTargetAt(event.clientX, event.clientY);
+    const point = wasDragging ? store.dropPoint(id, node, zone) : null;
+    endDrag();
+    if (wasDragging) {
+      drag.active = true;
+      if (point) {
+        moveDraggedTo(id, point);
+      }
+      setTimeout(() => {
+        drag.active = false;
+      }, 0);
+    }
+  };
+
+  els.list.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || event.target.closest(".twistie")) {
+      return;
+    }
     const row = event.target.closest("[data-id]");
     const node = row ? store.get(row.dataset.id) : null;
     if (!row || row.dataset.kind !== "tree" || !store.canRemove(node)) {
-      event.preventDefault();
       return;
     }
-    contextMenu.close();
     drag.id = node.id;
-    drag.active = true;
-    event.dataTransfer.setData("text/plain", node.id);
-    event.dataTransfer.effectAllowed = "move";
-    row.classList.add("dragging");
+    drag.active = false;
+    drag.pointerId = event.pointerId;
+    drag.startX = event.clientX;
+    drag.startY = event.clientY;
+    clearHoldTimer();
+    drag.holdTimer = setTimeout(() => {
+      beginDrag();
+    }, DRAG_HOLD_MS);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
   });
 
-  els.list.addEventListener("dragover", (event) => {
-    if (!drag.id) {
-      return;
-    }
-    autoscrollList(event);
-    const row = event.target.closest("[data-id]");
-    const node = row ? store.get(row.dataset.id) : null;
-    const zone = dropZone(event, node);
-    const point = store.dropPoint(drag.id, node, zone);
-    clearDropMarks();
-    if (!point) {
-      event.dataTransfer.dropEffect = "none";
-      return;
-    }
+  els.list.addEventListener("dragstart", (event) => {
     event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-    row.classList.add(`drop-${zone}`);
-  });
-
-  els.list.addEventListener("dragleave", (event) => {
-    if (!els.list.contains(event.relatedTarget)) {
-      clearDropMarks();
-    }
-  });
-
-  els.list.addEventListener("drop", (event) => {
-    event.preventDefault();
-    const row = event.target.closest("[data-id]");
-    const node = row ? store.get(row.dataset.id) : null;
-    const id = drag.id;
-    const point = store.dropPoint(id, node, dropZone(event, node));
-    endDrag();
-    if (point) {
-      moveDraggedTo(id, point);
-    }
-  });
-
-  els.list.addEventListener("dragend", () => {
-    endDrag();
-    setTimeout(() => {
-      drag.active = false;
-    }, 0);
   });
 
   els.list.addEventListener("mousedown", (event) => {

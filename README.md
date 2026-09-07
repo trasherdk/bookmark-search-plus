@@ -11,7 +11,7 @@ This is an original Manifest V3 implementation inspired by that UX, not a source
 3. If this extension is already listed, click **Remove** first
 4. Click **Load unpacked**
 5. Choose this folder: `bookmark-search-plus`
-6. Confirm the version is **1.7.0**
+6. Confirm the version is **1.7.2**
 7. Pin the toolbar icon (amber star)
 
 Click the icon, or press **Ctrl+Shift+.** (macOS: **Command+Shift+.**), to open the side panel. Drag its edge to resize.
@@ -40,7 +40,7 @@ Select an item, then use **Remove**, **Delete** when the list is focused, or **D
 Right-click a row for the same kind of menu as Bookmark search plus 2: open all in tabs, go parent, bookmark the highlighted tab(s) here, new bookmark/folder, cut/copy/paste, delete, sort by name, properties, and a bookmark-path submenu. **Advanced** expands or collapses a whole folder branch, opens all bookmarks in a new window, or copies a URL. **New Separator** is shown but disabled — Brave and Chrome have no bookmark separators.
 
 **Drag and drop**  
-In the tree, drag a bookmark or folder to move it. Drop on the top or bottom of a row to place it before or after that item. Drop on the middle of a folder to move it inside. Expand the destination folder first if you want to drop among its children. Built-in roots (bookmarks bar, other bookmarks) cannot be dragged. You cannot drop a folder into itself or into one of its children.
+In the tree, a short click still opens a bookmark or expands a folder. Hold the mouse button (or drag a few pixels) to move an item — the pointer becomes grabbing only after that. Drop on the top or bottom of a row to place it before or after that item. Drop on the middle of a folder to move it inside. Expand the destination folder first if you want to drop among its children. Built-in roots (bookmarks bar, other bookmarks) cannot be dragged. You cannot drop a folder into itself or into one of its children.
 
 **Go parent folder**  
 Select an item, then use the status-bar button, **Alt+Up**, or **Left** on a collapsed folder to jump to the enclosing folder.
@@ -69,12 +69,12 @@ Open the gear control next to the search box.
 | Action | Result |
 | --- | --- |
 | Click a bookmark | Open in a new tab next to the current one |
+| Hold, then drag a row | Move the bookmark or folder |
 | Alt+click | Open in the current tab |
 | Shift+click | Open in a new window |
 | Down from the search box | Jump to the first result or tree row |
 | Up / Down | Move the selection |
 | Enter | Open a bookmark, or expand/collapse a folder |
-| Drag a row | Move the bookmark or folder |
 | Right-click | Open the bookmark menu |
 | Right / Left | Expand / collapse a folder |
 | Shift+Right / Shift+Left | Expand / collapse a whole folder branch |
