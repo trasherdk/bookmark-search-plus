@@ -25,6 +25,7 @@ const els = {
   addPage: document.getElementById("add-page"),
   removeItem: document.getElementById("remove-item"),
   goParent: document.getElementById("go-parent"),
+  results: document.getElementById("results"),
   list: document.getElementById("list"),
   ctxRoot: document.getElementById("ctx-root"),
 };
@@ -66,7 +67,8 @@ const state = {
   savedExpanded: null,
   scopeFolderId: null,
   selectedId: null,
-  revealMode: false,
+  resultId: null,
+  resultRows: [],
   rows: [],
   actionError: null,
 };
@@ -182,8 +184,8 @@ function persistSoon() {
   }, 200);
 }
 
-function isSearching() {
-  return state.query.trim().length > 0 && !state.revealMode;
+function hasQuery() {
+  return state.query.trim().length > 0;
 }
 
 function beginSearchSession() {
@@ -199,7 +201,8 @@ function endSearchSession() {
     state.savedExpanded = null;
   }
   state.scopeFolderId = null;
-  state.revealMode = false;
+  state.resultId = null;
+  state.resultRows = [];
 }
 
 function expandAncestors(id) {
@@ -236,23 +239,19 @@ function visibleIndex(id) {
   return state.rows.findIndex((row) => row.node.id === id);
 }
 
-function selectId(id, { scroll = true } = {}) {
+function selectId(id, { scroll = true, scrollTree = scroll, scrollResults = scroll, centerTree = false, focusTree = false } = {}) {
   state.selectedId = id;
-  render({ scroll });
+  render({ scrollTree, scrollResults, centerTree, focusTree });
 }
 
-function revealInTree(id) {
-  if (state.query.trim()) {
-    beginSearchSession();
-    state.revealMode = true;
-  }
+function revealInTree(id, { center = false, focus = false } = {}) {
   expandAncestors(id);
   const node = store.get(id);
   if (store.isFolder(node)) {
     state.expanded.add(id);
   }
   persistSoon();
-  selectId(id);
+  selectId(id, { scrollTree: true, scrollResults: true, centerTree: center, focusTree: focus });
 }
 
 function goParentFolder() {
@@ -304,10 +303,6 @@ async function addCurrentPage() {
       title: (tab.title || "").trim() || tab.url,
       url: tab.url,
     });
-    if (state.query.trim()) {
-      beginSearchSession();
-      state.revealMode = true;
-    }
     expandAncestors(created.id);
     state.expanded.add(folderId);
     state.selectedId = created.id;
@@ -392,10 +387,6 @@ async function runBookmarkOp(work) {
 }
 
 function selectCreated(id, folderId) {
-  if (state.query.trim()) {
-    beginSearchSession();
-    state.revealMode = true;
-  }
   expandAncestors(id);
   if (folderId) {
     state.expanded.add(folderId);
@@ -858,7 +849,9 @@ function beginDrag() {
   contextMenu.close();
   drag.active = true;
   document.documentElement.classList.add("is-dragging");
-  els.list.querySelector(`[data-id="${CSS.escape(drag.id)}"]`)?.classList.add("dragging");
+  const sel = `[data-id="${CSS.escape(drag.id)}"]`;
+  els.list.querySelector(sel)?.classList.add("dragging");
+  els.results.querySelector(sel)?.classList.add("dragging");
 }
 
 function updateDropMarks(event) {
@@ -875,6 +868,7 @@ function endDrag() {
   clearHoldTimer();
   clearDropMarks();
   els.list.querySelector(".dragging")?.classList.remove("dragging");
+  els.results.querySelector(".dragging")?.classList.remove("dragging");
   drag.id = null;
   drag.pointerId = null;
   resetDragCursor();
@@ -900,10 +894,8 @@ async function moveDraggedTo(id, point) {
 async function activateNode(node, event, { fromResults = false } = {}) {
   const folder = store.isFolder(node);
   if (fromResults) {
-    revealInTree(node.id);
-    if (!folder) {
-      await openBookmark(node.url, openModeFromEvent(event));
-    }
+    state.resultId = node.id;
+    revealInTree(node.id, { center: true, focus: true });
     return;
   }
 
@@ -938,11 +930,9 @@ function updateStatus(resultCount, error) {
   els.status.classList.toggle("error", Boolean(shownError));
   if (shownError) {
     els.statusText.textContent = shownError;
-  } else if (isSearching()) {
+  } else if (hasQuery()) {
     els.statusText.textContent =
       resultCount === 1 ? "1 match" : `${resultCount} matches`;
-  } else if (state.revealMode && state.query.trim()) {
-    els.statusText.textContent = "Showing in tree — Esc for results";
   } else {
     const count = store.byId.size > 0 ? store.byId.size - 1 : 0;
     els.statusText.textContent = `${count} items`;
@@ -963,7 +953,9 @@ function renderTreeRows() {
   state.rows = flattenTree();
   if (!state.rows.length) {
     els.list.innerHTML = `<div class="empty">No bookmarks yet.</div>`;
-    updateStatus(0, null);
+    if (!hasQuery()) {
+      updateStatus(0, null);
+    }
     return;
   }
 
@@ -983,64 +975,95 @@ function renderTreeRows() {
     })
     .join("");
   els.list.innerHTML = html;
-  updateStatus(state.rows.length, null);
+  if (!hasQuery()) {
+    updateStatus(state.rows.length, null);
+  }
 }
 
-function renderResults() {
+function resultIndex(id) {
+  return state.resultRows.findIndex((row) => row.node.id === id);
+}
+
+function renderResultsPane() {
+  if (!hasQuery()) {
+    state.resultRows = [];
+    els.results.classList.add("hidden");
+    els.results.innerHTML = "";
+    return;
+  }
+
   const { results, error } = searchBookmarks(
     store,
     state.query,
     state.filters,
     state.scopeFolderId
   );
-  state.rows = results.map((item) => ({ kind: "result", node: item.node, path: item.path }));
+  state.resultRows = results.map((item) => ({ kind: "result", node: item.node, path: item.path }));
+  els.results.classList.remove("hidden");
 
   if (error) {
-    els.list.innerHTML = `<div class="error-msg">${escapeHtml(error)}</div>`;
+    els.results.innerHTML = `<div class="error-msg">${escapeHtml(error)}</div>`;
     updateStatus(0, error);
     return;
   }
   if (!results.length) {
-    els.list.innerHTML = `<div class="empty">No matching bookmarks or folders.</div>`;
+    els.results.innerHTML = `<div class="empty">No matching bookmarks or folders.</div>`;
     updateStatus(0, null);
     return;
   }
 
-  if (state.selectedId && visibleIndex(state.selectedId) === -1) {
-    state.selectedId = results[0].node.id;
+  if (state.resultId && resultIndex(state.resultId) === -1) {
+    state.resultId = null;
   }
 
   const html = results
     .map(({ node, path }) => {
       const folder = store.isFolder(node);
-      const selected = node.id === state.selectedId ? " selected" : "";
+      const selected = node.id === (state.resultId || state.selectedId) ? " selected" : "";
       const icon = folder ? folderIcon() : bookmarkIcon(node.url);
       const title = escapeHtml(node.title || (folder ? "Untitled folder" : node.url));
       const meta = folder ? "Folder" : escapeHtml(node.url);
       const pathLabel = escapeHtml(path || "Bookmarks");
       const tip = escapeHtml(folder ? path || title : `${node.url || ""}\n${path || "Bookmarks"}`);
-      return `<div class="row result${selected}" data-id="${node.id}" data-kind="result" title="${tip}">
+      return `<div class="row result${selected}" data-id="${node.id}" data-kind="result" role="option" title="${tip}">
         <div class="primary">${icon}<span class="title">${title}</span></div>
         <div class="meta">${meta}</div>
         <div class="path">${pathLabel}</div>
       </div>`;
     })
     .join("");
-  els.list.innerHTML = html;
+  els.results.innerHTML = html;
   updateStatus(results.length, null);
 }
 
-function render({ scroll = false } = {}) {
-  applyFilterInputs();
-  if (isSearching()) {
-    renderResults();
-  } else {
-    renderTreeRows();
+function scrollRowIn(container, id, block) {
+  const row = container.querySelector(`[data-id="${CSS.escape(id)}"]`);
+  if (!row) {
+    return;
   }
+  if (block === "center") {
+    const area = container.getBoundingClientRect();
+    const item = row.getBoundingClientRect();
+    container.scrollTop += item.top - area.top - (area.height - item.height) / 2;
+    return;
+  }
+  row.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
 
-  if (scroll && state.selectedId) {
-    const row = els.list.querySelector(`[data-id="${CSS.escape(state.selectedId)}"]`);
-    row?.scrollIntoView({ block: "nearest" });
+function render({ scroll = false, scrollTree = scroll, scrollResults = scroll, centerTree = false, focusTree = false } = {}) {
+  applyFilterInputs();
+  renderTreeRows();
+  renderResultsPane();
+
+  if (scrollTree && state.selectedId) {
+    scrollRowIn(els.list, state.selectedId, centerTree ? "center" : "nearest");
+  }
+  if (scrollResults && (state.resultId || state.selectedId)) {
+    const id = state.resultId || state.selectedId;
+    scrollRowIn(els.results, id, "nearest");
+  }
+  if (focusTree) {
+    els.list.focus();
   }
 }
 
@@ -1051,7 +1074,18 @@ function moveSelection(delta) {
   const current = visibleIndex(state.selectedId);
   const next = current === -1 ? (delta > 0 ? 0 : state.rows.length - 1) : current + delta;
   const clamped = Math.max(0, Math.min(state.rows.length - 1, next));
-  selectId(state.rows[clamped].node.id);
+  selectId(state.rows[clamped].node.id, { scrollTree: true, scrollResults: false });
+}
+
+function moveResultSelection(delta) {
+  if (!state.resultRows.length) {
+    return;
+  }
+  const current = resultIndex(state.resultId);
+  const next = current === -1 ? (delta > 0 ? 0 : state.resultRows.length - 1) : current + delta;
+  const clamped = Math.max(0, Math.min(state.resultRows.length - 1, next));
+  state.resultId = state.resultRows[clamped].node.id;
+  render({ scrollResults: true, scrollTree: false });
 }
 
 function setQuery(value, { immediate = false } = {}) {
@@ -1061,17 +1095,14 @@ function setQuery(value, { immediate = false } = {}) {
 
   if (!previous.trim() && value.trim()) {
     beginSearchSession();
-    state.revealMode = false;
+    state.resultId = null;
   }
   if (previous.trim() && !value.trim()) {
     endSearchSession();
     persistSoon();
   }
-  if (state.revealMode && value.trim() && value !== previous) {
-    state.revealMode = false;
-  }
 
-  const update = () => render({ scroll: true });
+  const update = () => render({ scrollResults: true, scrollTree: false });
   if (immediate) {
     clearTimeout(searchTimer);
     update();
@@ -1097,19 +1128,29 @@ function bindEvents() {
   els.search.addEventListener("keydown", (event) => {
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      if (!state.rows.length) {
-        render();
-      }
-      if (state.rows.length) {
-        const first = state.rows[0].node.id;
-        selectId(first);
+      if (hasQuery()) {
+        if (!state.resultRows.length) {
+          render();
+        }
+        if (state.resultRows.length) {
+          state.resultId = state.resultRows[0].node.id;
+          render({ scrollResults: true, scrollTree: false });
+          els.results.focus();
+        }
+      } else if (state.rows.length) {
+        selectId(state.rows[0].node.id, { scrollTree: true, scrollResults: false });
         els.list.focus();
       }
     } else if (event.key === "Enter") {
-      const first = state.rows[0];
+      const first = state.resultRows[0] || state.rows[0];
       if (first) {
         event.preventDefault();
-        activateNode(first.node, event, { fromResults: isSearching() });
+        if (hasQuery()) {
+          state.resultId = first.node.id;
+          revealInTree(first.node.id, { center: true, focus: true });
+        } else {
+          activateNode(first.node, event);
+        }
       }
     } else if (event.key === "Escape" && state.query) {
       event.preventDefault();
@@ -1197,6 +1238,16 @@ function bindEvents() {
     openItemMenu(event, node);
   });
 
+  els.results.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    const row = event.target.closest("[data-id]");
+    const node = row ? store.get(row.dataset.id) : null;
+    if (node) {
+      state.resultId = node.id;
+      openItemMenu(event, node);
+    }
+  });
+
   els.list.addEventListener("click", (event) => {
     if (drag.active) {
       event.preventDefault();
@@ -1215,7 +1266,20 @@ function bindEvents() {
       activateNode(node, event);
       return;
     }
-    activateNode(node, event, { fromResults: row.dataset.kind === "result" });
+    activateNode(node, event);
+  });
+
+  els.results.addEventListener("click", (event) => {
+    if (drag.active) {
+      event.preventDefault();
+      return;
+    }
+    const row = event.target.closest("[data-id]");
+    const node = row ? store.get(row.dataset.id) : null;
+    if (!node) {
+      return;
+    }
+    activateNode(node, event, { fromResults: true });
   });
 
   const onPointerMove = (event) => {
@@ -1260,15 +1324,7 @@ function bindEvents() {
     }
   };
 
-  els.list.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0 || event.target.closest(".twistie")) {
-      return;
-    }
-    const row = event.target.closest("[data-id]");
-    const node = row ? store.get(row.dataset.id) : null;
-    if (!row || row.dataset.kind !== "tree" || !store.canRemove(node)) {
-      return;
-    }
+  const armDrag = (event, node) => {
     drag.id = node.id;
     drag.active = false;
     drag.pointerId = event.pointerId;
@@ -1281,9 +1337,37 @@ function bindEvents() {
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
     window.addEventListener("pointercancel", onPointerUp);
+  };
+
+  els.list.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || event.target.closest(".twistie")) {
+      return;
+    }
+    const row = event.target.closest("[data-id]");
+    const node = row ? store.get(row.dataset.id) : null;
+    if (!row || row.dataset.kind !== "tree" || !store.canRemove(node)) {
+      return;
+    }
+    armDrag(event, node);
+  });
+
+  els.results.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    const row = event.target.closest("[data-id]");
+    const node = row ? store.get(row.dataset.id) : null;
+    if (!row || !store.canRemove(node)) {
+      return;
+    }
+    armDrag(event, node);
   });
 
   els.list.addEventListener("dragstart", (event) => {
+    event.preventDefault();
+  });
+
+  els.results.addEventListener("dragstart", (event) => {
     event.preventDefault();
   });
 
@@ -1294,6 +1378,24 @@ function bindEvents() {
   });
 
   els.list.addEventListener("auxclick", (event) => {
+    if (event.button !== 1) {
+      return;
+    }
+    event.preventDefault();
+    const row = event.target.closest("[data-id]");
+    const node = row ? store.get(row.dataset.id) : null;
+    if (node && !store.isFolder(node)) {
+      openBookmark(node.url, "tab");
+    }
+  });
+
+  els.results.addEventListener("mousedown", (event) => {
+    if (event.button === 1) {
+      event.preventDefault();
+    }
+  });
+
+  els.results.addEventListener("auxclick", (event) => {
     if (event.button !== 1) {
       return;
     }
@@ -1319,8 +1421,8 @@ function bindEvents() {
       }
     } else if (event.key === "Enter" && node) {
       event.preventDefault();
-      activateNode(node, event, { fromResults: isSearching() });
-    } else if (event.key === "ArrowRight" && node && store.isFolder(node) && !isSearching()) {
+      activateNode(node, event);
+    } else if (event.key === "ArrowRight" && node && store.isFolder(node)) {
       event.preventDefault();
       if (event.shiftKey) {
         setBranchExpanded(node, true);
@@ -1328,8 +1430,8 @@ function bindEvents() {
       }
       state.expanded.add(node.id);
       persistSoon();
-      render({ scroll: true });
-    } else if (event.key === "ArrowLeft" && !isSearching()) {
+      render({ scrollTree: true });
+    } else if (event.key === "ArrowLeft") {
       event.preventDefault();
       if (event.shiftKey && node && store.isFolder(node)) {
         setBranchExpanded(node, false);
@@ -1338,7 +1440,7 @@ function bindEvents() {
       if (node && store.isFolder(node) && state.expanded.has(node.id)) {
         state.expanded.delete(node.id);
         persistSoon();
-        selectId(node.id);
+        selectId(node.id, { scrollTree: true, scrollResults: false });
       } else {
         goParentFolder();
       }
@@ -1346,14 +1448,37 @@ function bindEvents() {
       event.preventDefault();
       goParentFolder();
     } else if (event.key === "Escape") {
-      if (state.revealMode) {
-        state.revealMode = false;
-        render({ scroll: true });
-        els.search.focus();
-      } else if (state.query) {
-        setQuery("", { immediate: true });
+      if (state.query) {
         els.search.focus();
       }
+    }
+  });
+
+  els.results.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveResultSelection(1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (resultIndex(state.resultId) <= 0) {
+        els.search.focus();
+        els.search.select();
+        return;
+      }
+      moveResultSelection(-1);
+    } else if (event.key === "Enter") {
+      const node = store.get(state.resultId);
+      if (node) {
+        event.preventDefault();
+        revealInTree(node.id, { center: true, focus: true });
+        if (!store.isFolder(node)) {
+          openBookmark(node.url, openModeFromEvent(event));
+        }
+      }
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      els.search.focus();
+      els.search.select();
     }
   });
 
