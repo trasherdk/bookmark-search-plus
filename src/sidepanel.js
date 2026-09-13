@@ -2,6 +2,17 @@ import { BookmarkStore, faviconUrl } from "./bookmarks-store.js";
 import { ContextMenu } from "./context-menu.js";
 import { openFormDialog } from "./dialogs.js";
 import { clampFontSize, extensionAlive, FONT_DEFAULT, getPrefs, isContextInvalidated, setPrefs } from "./prefs.js";
+import {
+  captureBookmarkSnapshot,
+  clearBackup,
+  formatBackupTime,
+  loadBackup,
+  persistBackup,
+  restoreBookmarkSnapshot,
+  tryParseBackup,
+  writeBackupFile,
+} from "./bookmark-backup.js";
+import { countImportTree, mergeFirefoxBookmarks, normalizeBookmarkUrl, parseFirefoxExport } from "./firefox-import.js";
 import { DEFAULT_FILTERS, filtersAreDefault, searchBookmarks } from "./search.js";
 
 const STORAGE_KEY = "bsp-state";
@@ -22,6 +33,10 @@ const els = {
   resetFilters: document.getElementById("reset-filters"),
   status: document.getElementById("status"),
   statusText: document.getElementById("status-text"),
+  importFile: document.getElementById("import-file"),
+  restoreFile: document.getElementById("restore-file"),
+  undoImport: document.getElementById("undo-import"),
+  importFf: document.getElementById("import-ff"),
   addPage: document.getElementById("add-page"),
   removeItem: document.getElementById("remove-item"),
   goParent: document.getElementById("go-parent"),
@@ -75,6 +90,7 @@ const state = {
 
 let persistTimer = 0;
 let searchTimer = 0;
+let sessionBackup = null;
 const DRAG_HOLD_MS = 200;
 const DRAG_MOVE_PX = 8;
 const drag = {
@@ -315,6 +331,186 @@ async function addCurrentPage() {
     state.actionError = error.message || "Could not add this page.";
     render();
   }
+}
+
+async function lastBackup() {
+  return (await loadBackup()) || sessionBackup;
+}
+
+async function refreshUndoButton() {
+  if (!els.undoImport) {
+    return;
+  }
+  const backup = await lastBackup();
+  els.undoImport.classList.toggle("hidden", !backup);
+  if (backup) {
+    els.undoImport.title = `Restore Brave bookmarks to the backup from ${formatBackupTime(backup)}`;
+  }
+}
+
+function setImportBusy(busy) {
+  if (els.importFf) {
+    els.importFf.disabled = busy;
+  }
+  if (els.undoImport) {
+    els.undoImport.disabled = busy;
+  }
+}
+
+async function runRestore(snapshot, sourceLabel) {
+  const when = formatBackupTime(snapshot);
+  const ok = window.confirm(
+    `Restore Brave bookmarks to ${sourceLabel || "the backup"} from ${when}?\n\n` +
+      `Folders and bookmarks will be moved and renamed back.\n` +
+      `Items created after that backup — including the import — will be removed.\n` +
+      `Bookmarks you added after the backup will also be removed.`
+  );
+  if (!ok) {
+    return;
+  }
+  setImportBusy(true);
+  els.statusText.textContent = "Restoring bookmark backup…";
+  store.pauseChrome();
+  try {
+    const stats = await restoreBookmarkSnapshot(snapshot);
+    sessionBackup = null;
+    await clearBackup();
+    state.actionError = null;
+    store.resumeChrome();
+    await store.load();
+    await refreshUndoButton();
+    els.statusText.textContent =
+      `Restored backup from ${when}` +
+      (stats.moved ? `, ${stats.moved} moved` : "") +
+      (stats.renamed ? `, ${stats.renamed} renamed` : "") +
+      (stats.removed ? `, ${stats.removed} import leftovers removed` : "") +
+      ".";
+  } catch (error) {
+    store.resumeChrome();
+    if (isContextInvalidated(error)) {
+      noteDeadContext();
+      return;
+    }
+    setActionError(error.message || "Restore failed.");
+    try {
+      await store.load();
+    } catch {
+      render();
+    }
+  } finally {
+    setImportBusy(false);
+    if (els.restoreFile) {
+      els.restoreFile.value = "";
+    }
+  }
+}
+
+async function importFirefoxFile(file) {
+  if (!extensionAlive()) {
+    noteDeadContext();
+    return;
+  }
+  let text;
+  try {
+    text = await file.text();
+  } catch (error) {
+    setActionError(error.message || "Could not read that file.");
+    return;
+  }
+  const backup = tryParseBackup(text);
+  if (backup) {
+    await runRestore(backup, `“${file.name}”`);
+    return;
+  }
+  let tree;
+  try {
+    tree = parseFirefoxExport(text, file.name);
+  } catch (error) {
+    setActionError(error.message || "Could not read that Firefox export.");
+    return;
+  }
+  const { folders, bookmarks } = countImportTree(tree);
+  if (!folders && !bookmarks) {
+    setActionError("No bookmarks found in that file.");
+    return;
+  }
+  setImportBusy(true);
+  els.statusText.textContent = "Saving bookmark backup…";
+  try {
+    const snapshot = await captureBookmarkSnapshot();
+    const saved = await writeBackupFile(snapshot);
+    if (saved === "cancelled") {
+      els.statusText.textContent = "Import cancelled — no backup saved.";
+      return;
+    }
+    const kept =
+      saved === "saved" ? "Backup saved." : "Backup downloaded to your Downloads folder.";
+    const ok = window.confirm(
+      `${kept} Merge “${file.name}” into Brave?\n\n` +
+        `${bookmarks} bookmarks and ${folders} folders in the file.\n` +
+        `URLs that already exist anywhere are skipped.\n` +
+        `Firefox toolbar/other roots merge into Brave’s, and help folders are skipped.\n` +
+        `Existing folders are only renamed when the name is almost the same.\n` +
+        `Brave wrappers are not flattened onto the bar.\n` +
+        `Nothing is deleted. Use Undo (or the backup file) if something looks wrong.`
+    );
+    if (!ok) {
+      els.statusText.textContent = `${kept} Import cancelled.`;
+      return;
+    }
+    sessionBackup = snapshot;
+    try {
+      await persistBackup(snapshot);
+    } catch {
+      // The saved file and in-memory copy are enough if storage is full.
+    }
+    await refreshUndoButton();
+    els.statusText.textContent = "Importing Firefox bookmarks…";
+    store.pauseChrome();
+    const stats = await mergeFirefoxBookmarks(tree, {
+      structure: store.structureIndex(normalizeBookmarkUrl),
+      rootExists: (id) => Boolean(store.get(id)),
+    });
+    state.actionError = null;
+    store.resumeChrome();
+    await store.load();
+    els.statusText.textContent =
+      `Imported ${stats.added} bookmarks, ${stats.folders} new folders` +
+      (stats.reused ? `, ${stats.reused} existing folders reused` : "") +
+      (stats.moved ? `, ${stats.moved} moved` : "") +
+      (stats.renamed ? `, ${stats.renamed} renamed` : "") +
+      `. ${stats.skipped} already present` +
+      (stats.invalid ? `, ${stats.invalid} skipped (not importable)` : "") +
+      ". Undo is available.";
+  } catch (error) {
+    store.resumeChrome();
+    if (isContextInvalidated(error)) {
+      noteDeadContext();
+      return;
+    }
+    setActionError(error.message || "Import failed.");
+    try {
+      await store.load();
+    } catch {
+      render();
+    }
+  } finally {
+    setImportBusy(false);
+    els.importFile.value = "";
+  }
+}
+
+async function undoLastImport() {
+  if (!extensionAlive()) {
+    noteDeadContext();
+    return;
+  }
+  const snapshot = await lastBackup();
+  if (snapshot) {
+    await runRestore(snapshot, "the last import backup");
+    return;
+  }
+  els.restoreFile?.click();
 }
 
 async function removeSelected() {
@@ -1216,6 +1412,37 @@ function bindEvents() {
     render({ scroll: true });
   });
 
+  els.importFf.addEventListener("click", () => {
+    els.importFile.click();
+  });
+
+  els.undoImport.addEventListener("click", () => {
+    undoLastImport();
+  });
+
+  els.importFile.addEventListener("change", () => {
+    const file = els.importFile.files?.[0];
+    if (file) {
+      importFirefoxFile(file);
+    }
+  });
+
+  els.restoreFile.addEventListener("change", () => {
+    const file = els.restoreFile.files?.[0];
+    if (!file) {
+      return;
+    }
+    file.text().then((text) => {
+      const snapshot = tryParseBackup(text);
+      if (!snapshot) {
+        setActionError("That file is not a Bookmark Search Plus backup.");
+        els.restoreFile.value = "";
+        return;
+      }
+      runRestore(snapshot, `“${file.name}”`);
+    });
+  });
+
   els.addPage.addEventListener("click", () => {
     addCurrentPage();
   });
@@ -1499,6 +1726,7 @@ function bindEvents() {
 async function init() {
   bindEvents();
   await loadPersisted();
+  await refreshUndoButton();
   applyFilterInputs();
   store.onChange(() => {
     contextMenu.close();

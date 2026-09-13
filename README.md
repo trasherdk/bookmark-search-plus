@@ -11,7 +11,7 @@ This is an original Manifest V3 implementation inspired by that UX, not a source
 3. If this extension is already listed, click **Remove** first
 4. Click **Load unpacked**
 5. Choose this folder: `bookmark-search-plus`
-6. Confirm the version is **1.8.3**
+6. Confirm the version is **1.9.5**
 7. Pin the toolbar icon (amber star)
 
 Click the icon, or press **Ctrl+Shift+.** (macOS: **Command+Shift+.**), to open the side panel. Drag its edge to resize.
@@ -29,6 +29,12 @@ Browse folders like the native bookmarks sidebar. Click a folder to expand or co
 Type in the box. Matches appear in a dropdown above the tree; the tree stays visible. Each result shows its title, URL (or “Folder”), and the parent path (`Work / Docs / Specs`).
 
 Click a result to select that item in the tree and scroll it to the center of the list. Hold, then drag a result into the tree to move it. Middle-click (or Enter in the dropdown) opens a bookmark. Clear the search box to restore the folders you had open before you searched.
+
+**Import from Firefox**  
+In Firefox: Bookmarks → Manage bookmarks → Import and Backup → **Export Bookmarks to HTML** (or restore a `bookmarks-*.json` backup). In this panel, click **Import** and choose that file. You will be asked to save a **Brave backup** first (`bsp-bookmarks-backup-*.json`). Keep that file. Firefox’s toolbar, menu, and other-bookmarks roots are merged into the matching Brave roots — they are not created as folders on the bar. Built-in Firefox folders such as **Mozilla Firefox** are skipped. URLs that already exist anywhere are skipped. Folders are matched by the bookmarks already in them. A folder is only renamed when the name is the same except for a parenthetical (`Dell` → `Dell (R230)`). Existing Brave wrappers (for example `FumlerSoft`) are not flattened onto the bar. A new parent such as `Dell Poweredge` can still be created and the matching folder moved into it. Separators and `javascript:` / `place:` items are ignored.
+
+**Undo import**  
+After a backup is taken, **Undo** appears in the status bar. It moves and renames folders back, then removes items the import created. Bookmarks you added after that backup are removed too. If the button is gone, click **Import** and choose the `bsp-bookmarks-backup-*.json` file.
 
 **Add current page**  
 Use **Add page** in the status bar, or **Ctrl+D** (macOS: **Command+D**). The bookmark goes in the selected folder, or in the parent folder of a selected bookmark. If nothing is selected, it goes in the bookmarks bar. Internal pages such as `brave://` cannot be bookmarked.
@@ -86,14 +92,15 @@ Open the gear control next to the search box.
 
 ## Permissions
 
-- **Bookmarks** — read the tree, add pages, create folders, move items, and remove items
+- **Bookmarks** — read the tree, add pages, import from Firefox, create folders, move items, and remove items
 - **Side panel** — dock beside the page
 - **Tabs** — open a result in the current tab, a new tab, or a new window
 - **Favicon** — show site icons already cached by the browser
-- **Storage** — remember open folders, filters, and text size
+- **Storage** — remember open folders, filters, text size, and the last import backup
+- **Unlimited storage** — keep that backup even when the bookmark tree is large
 
 Bookmarks are not uploaded. Nothing leaves the browser.
 
 ## Out of scope (v1)
 
-Undo history is not included yet.
+General undo history is not included. Import has its own backup and **Undo**.

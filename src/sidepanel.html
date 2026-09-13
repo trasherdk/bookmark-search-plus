@@ -69,6 +69,14 @@
     <div id="status" class="status">
       <span id="status-text">Loading bookmarks…</span>
       <div class="status-actions">
+        <input id="import-file" class="visually-hidden" type="file" accept=".html,.htm,.json" />
+        <input id="restore-file" class="visually-hidden" type="file" accept=".json" />
+        <button id="undo-import" class="text-btn hidden" type="button" title="Restore the bookmark backup taken before the last import">
+          Undo
+        </button>
+        <button id="import-ff" class="text-btn" type="button" title="Save a Brave bookmark backup, then merge a Firefox export">
+          Import
+        </button>
         <button id="add-page" class="text-btn" type="button" title="Bookmark the current page">
           Add page
         </button>

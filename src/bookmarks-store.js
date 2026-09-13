@@ -5,6 +5,7 @@ export class BookmarkStore {
     this.root = null;
     this.byId = new Map();
     this.listeners = new Set();
+    this.paused = false;
   }
 
   async load() {
@@ -43,8 +44,9 @@ export class BookmarkStore {
   }
 
   subscribeToChrome() {
+    this.paused = false;
     const reload = () => {
-      if (!chrome?.runtime?.id) {
+      if (this.paused || !chrome?.runtime?.id) {
         return;
       }
       this.load().catch(() => {});
@@ -62,6 +64,66 @@ export class BookmarkStore {
 
   get(id) {
     return this.byId.get(id) ?? null;
+  }
+
+  pauseChrome() {
+    this.paused = true;
+  }
+
+  resumeChrome() {
+    this.paused = false;
+  }
+
+  existingUrls(normalize) {
+    const urls = new Set();
+    for (const node of this.byId.values()) {
+      if (node.url) {
+        urls.add(normalize(node.url));
+      }
+    }
+    return urls;
+  }
+
+  urlFolderIndex(normalize) {
+    const map = new Map();
+    for (const node of this.byId.values()) {
+      if (node.url && node.parentId && node.parentId !== ROOT_ID) {
+        map.set(normalize(node.url), node.parentId);
+      }
+    }
+    return map;
+  }
+
+  structureIndex(normalize) {
+    const parentOf = new Map();
+    const titleOf = new Map();
+    const childFolderIds = new Map();
+    const urlToFolder = new Map();
+    const existingUrls = new Set();
+    const systemRoot = new Set([ROOT_ID]);
+    for (const root of this.visibleRoots()) {
+      systemRoot.add(root.id);
+    }
+    for (const node of this.byId.values()) {
+      if (node.parentId) {
+        parentOf.set(node.id, node.parentId);
+      }
+      titleOf.set(node.id, node.title || "");
+      if (this.isFolder(node)) {
+        childFolderIds.set(
+          node.id,
+          (node.children ?? []).filter((child) => this.isFolder(child)).map((child) => child.id)
+        );
+      }
+      if (node.url) {
+        const key = normalize(node.url);
+        existingUrls.add(key);
+        if (node.parentId && node.parentId !== ROOT_ID) {
+          urlToFolder.set(key, node.parentId);
+        }
+      }
+    }
+    return { parentOf, titleOf, childFolderIds, urlToFolder, existingUrls, systemRoot };
   }
 
   isFolder(node) {
