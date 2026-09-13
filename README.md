@@ -16,7 +16,7 @@ This is an original Manifest V3 implementation inspired by that UX, not a source
 
 Click the icon, or press **Ctrl+Shift+.** (macOS: **Command+Shift+.**), to open the side panel. Drag its edge to resize.
 
-The same **Load unpacked** steps work in Chrome (`chrome://extensions`) and Edge (`edge://extensions`).
+The same **Load unpacked** steps work in Chrome (`chrome://extensions`) and Edge (`edge://extensions`). A ready-made zip is attached to each [GitHub Release](https://github.com/trasherdk/bookmark-search-plus/releases) — unzip it, then load that folder.
 
 If the shortcut is unused, set it under `brave://extensions/shortcuts`.
 
@@ -99,7 +99,33 @@ Open the gear control next to the search box.
 - **Storage** — remember open folders, filters, text size, and the last import backup
 - **Unlimited storage** — keep that backup even when the bookmark tree is large
 
-Bookmarks are not uploaded. Nothing leaves the browser.
+Bookmarks are not uploaded. Nothing leaves the browser. See [PRIVACY.md](PRIVACY.md).
+
+## License
+
+[MIT](LICENSE). Do what you want with it.
+
+## Releasing
+
+1. Bump `version` in `manifest.json` and the install step above.
+2. Commit (usually on `develop`), then merge to `master`.
+3. Tag the ship commit and push the tag:
+
+```text
+git tag v1.9.5
+git push origin master
+git push origin v1.9.5
+```
+
+GitHub Actions packages `bookmark-search-plus-<version>.zip` (manifest at the zip root, no `.git` or icon generator) and publishes a GitHub Release. The tag must match the manifest version (`v1.9.5` ↔ `1.9.5`).
+
+Local dry run:
+
+```text
+node scripts/package.mjs
+```
+
+That writes `dist/bookmark-search-plus-1.9.5.zip`. Unzip and **Load unpacked**, or upload the zip to the [Chrome Web Store](https://chrome.google.com/webstore/devconsole).
 
 ## Out of scope (v1)
 
