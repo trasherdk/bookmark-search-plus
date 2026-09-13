@@ -40,7 +40,10 @@ html,
 body {
   margin: 0;
   height: 100%;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
+  overflow: hidden;
   background: var(--bg);
   color: var(--text);
 }
@@ -225,13 +228,17 @@ body {
 
 .lists {
   flex: 1;
+  min-width: 0;
   min-height: 0;
+  width: 100%;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
 }
 
 .results {
   flex: 0 1 auto;
+  min-width: 0;
   max-height: 42%;
   overflow: auto;
   outline: none;
@@ -244,6 +251,7 @@ body {
 
 .list {
   flex: 1;
+  min-width: 0;
   overflow: auto;
   outline: none;
   touch-action: pan-y;
@@ -256,6 +264,8 @@ body {
 .row {
   display: flex;
   align-items: center;
+  min-width: 0;
+  max-width: 100%;
   min-height: var(--row-h);
   padding-right: 6px;
   cursor: default;
@@ -311,6 +321,8 @@ html.is-dragging * {
 }
 
 .row .title {
+  min-width: 0;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
 }
