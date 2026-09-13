@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Bookmark Search Plus",
   "short_name": "BSP",
-  "version": "1.8.2",
+  "version": "1.8.3",
   "description": "Find bookmarks quickly. Search titles, URLs, and folders, then reveal them in the tree.",
   "minimum_chrome_version": "116",
   "icons": {

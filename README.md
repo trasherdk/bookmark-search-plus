@@ -11,7 +11,7 @@ This is an original Manifest V3 implementation inspired by that UX, not a source
 3. If this extension is already listed, click **Remove** first
 4. Click **Load unpacked**
 5. Choose this folder: `bookmark-search-plus`
-6. Confirm the version is **1.8.2**
+6. Confirm the version is **1.8.3**
 7. Pin the toolbar icon (amber star)
 
 Click the icon, or press **Ctrl+Shift+.** (macOS: **Command+Shift+.**), to open the side panel. Drag its edge to resize.
