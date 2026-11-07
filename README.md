@@ -11,7 +11,7 @@ This is an original Manifest V3 implementation inspired by that UX, not a source
 3. If this extension is already listed, click **Remove** first
 4. Click **Load unpacked**
 5. Choose this folder: `bookmark-search-plus`
-6. Confirm the version is **1.9.5**
+6. Confirm the version is **1.9.7**
 7. Pin the toolbar icon (amber star)
 
 Click the icon, or press **Ctrl+Shift+.** (macOS: **Command+Shift+.**), to open the side panel. Drag its edge to resize.
@@ -36,14 +36,23 @@ In Firefox: Bookmarks → Manage bookmarks → Import and Backup → **Export Bo
 **Undo import**  
 After a backup is taken, **Undo** appears in the status bar. It moves and renames folders back, then removes items the import created. Bookmarks you added after that backup are removed too. If the button is gone, click **Import** and choose the `bsp-bookmarks-backup-*.json` file.
 
+**Add a folder**  
+Right-click a folder and choose **Add folder**. The new folder is created inside the one you clicked. The bookmarks bar works the same way.
+
+**Add a bookmark**  
+Right-click a folder and choose **Add bookmark**. A bookmark is a title and a link. The current page is filled in when it can be bookmarked; change either field before you add it.
+
 **Add current page**  
-Use **Add page** in the status bar, or **Ctrl+D** (macOS: **Command+D**). The bookmark goes in the selected folder, or in the parent folder of a selected bookmark. If nothing is selected, it goes in the bookmarks bar. Internal pages such as `brave://` cannot be bookmarked.
+Use **Add page** in the status bar, **Ctrl+D** (macOS: **Command+D**), or right-click a folder and choose **Add current page**. That saves the current page’s title and link with no dialog. The bookmark goes in that folder, or in the selected folder, or in the parent folder of a selected bookmark. If nothing is selected, it goes in the bookmarks bar. Internal pages such as `brave://` cannot be bookmarked.
 
 **Remove**  
-Select an item, then use **Remove**, **Delete** when the list is focused, or **Delete** on the right-click menu. Bookmarks are removed on their own. Removing a folder deletes that folder and every bookmark and folder inside it. The bookmarks bar and other built-in roots cannot be removed.
+Select an item, then use **Remove**, **Delete** when the list is focused, or **Delete** / **Delete folder** on the right-click menu. Bookmarks are removed on their own. Removing a folder deletes that folder and every bookmark and folder inside it. The bookmarks bar and other built-in roots cannot be removed.
+
+**Rename**  
+Right-click a folder and choose **Rename** to change its name. Right-click a bookmark and choose **Properties** to change its title and link. Built-in roots cannot be renamed.
 
 **Right-click menu**  
-Right-click a row for the same kind of menu as Bookmark search plus 2: open all in tabs, go parent, bookmark the highlighted tab(s) here, new bookmark/folder, cut/copy/paste, delete, sort by name, properties, and a bookmark-path submenu. **Advanced** expands or collapses a whole folder branch, opens all bookmarks in a new window, or copies a URL. **New Separator** is shown but disabled — Brave and Chrome have no bookmark separators.
+Right-click a folder for **Add folder**, **Add bookmark**, **Add current page**, **Delete folder**, and **Rename**. Right-click a bookmark for **Delete** and **Properties**. The same menu is available on a search result. Each bookmark row shows its title and its link.
 
 **Drag and drop**  
 In the tree, a short click still opens a bookmark or expands a folder. Hold the mouse button (or drag a few pixels) to move an item — the pointer becomes grabbing only after that. You can also hold and drag a search result into the tree; that moves the bookmark from its current folder. Drop on the top or bottom of a row to place it before or after that item. Drop on the middle of a folder to move it inside. Expand the destination folder first if you want to drop among its children. Built-in roots (bookmarks bar, other bookmarks) cannot be dragged. You cannot drop a folder into itself or into one of its children.
@@ -83,7 +92,8 @@ Open the gear control next to the search box.
 | Click a search result | Select that item in the tree and center it |
 | Up / Down | Move the selection |
 | Enter | Open a bookmark, or expand/collapse a folder |
-| Right-click | Open the bookmark menu |
+| Right-click a folder | Add folder, add bookmark (title and link), add current page, delete folder, or rename |
+| Right-click a bookmark | Delete, or edit title and link |
 | Right / Left | Expand / collapse a folder |
 | Shift+Right / Shift+Left | Expand / collapse a whole folder branch |
 | Escape | Close the menu, leave “showing in tree”, or clear the search |
@@ -107,25 +117,27 @@ Bookmarks are not uploaded. Nothing leaves the browser. See [PRIVACY.md](PRIVACY
 
 ## Releasing
 
-1. Bump `version` in `manifest.json` and the install step above.
-2. Commit (usually on `develop`), then merge to `master`.
-3. Tag the ship commit and push the tag:
+From a clean `develop` branch that matches `origin/develop`:
 
 ```text
-git tag v1.9.5
-git push origin master
-git push origin v1.9.5
+pnpm release:patch
+pnpm release:minor
+pnpm release:major
 ```
 
-GitHub Actions packages `bookmark-search-plus-<version>.zip` (manifest at the zip root, no `.git` or icon generator) and publishes a GitHub Release. The tag must match the manifest version (`v1.9.5` ↔ `1.9.5`).
+`pnpm release` ships the version already in `manifest.json`.
 
-Local dry run:
+The script bumps `manifest.json`, `package.json`, and the install step above, commits that on `develop`, merges it into `master`, fast-forwards `develop` to the same commit, then tags `vX.Y.Z` and pushes the tag. Chrome extension versions are `X.Y.Z` only.
+
+GitHub Actions packages `bookmark-search-plus-<version>.zip` (manifest at the zip root, no `.git` or icon generator) and publishes a GitHub Release. The tag must match the manifest version (`vX.Y.Z` ↔ `X.Y.Z`).
+
+Local dry run, without tagging:
 
 ```text
-node scripts/package.mjs
+pnpm package
 ```
 
-That writes `dist/bookmark-search-plus-1.9.5.zip`. Unzip and **Load unpacked**, or upload the zip to the [Chrome Web Store](https://chrome.google.com/webstore/devconsole).
+That writes `dist/bookmark-search-plus-<version>.zip`. Unzip and **Load unpacked**, or upload the zip to the [Chrome Web Store](https://chrome.google.com/webstore/devconsole).
 
 ## Out of scope (v1)
 

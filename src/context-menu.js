@@ -34,9 +34,16 @@ export class ContextMenu {
     this.onAction = null;
     this.items = [];
     this.submenuTimer = 0;
+    this.closeArmed = false;
     this.boundPointer = (event) => this.onPointerDown(event);
     this.boundKey = (event) => this.onKeyDown(event);
     this.boundClose = () => this.close();
+    this.boundScroll = () => {
+      if (!this.closeArmed) {
+        return;
+      }
+      this.close();
+    };
   }
 
   get open() {
@@ -47,24 +54,33 @@ export class ContextMenu {
     this.close();
     this.items = items;
     this.onAction = onAction;
+    this.closeArmed = false;
     const menu = this.renderMenu(items);
     this.host.append(menu);
     clampMenu(menu, x, y);
     document.addEventListener("pointerdown", this.boundPointer, true);
     document.addEventListener("keydown", this.boundKey, true);
     window.addEventListener("resize", this.boundClose);
-    document.addEventListener("scroll", this.boundClose, true);
+    document.addEventListener("scroll", this.boundScroll, true);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (this.open) {
+          this.closeArmed = true;
+        }
+      });
+    });
   }
 
   close() {
     clearTimeout(this.submenuTimer);
+    this.closeArmed = false;
     this.host.replaceChildren();
     this.items = [];
     this.onAction = null;
     document.removeEventListener("pointerdown", this.boundPointer, true);
     document.removeEventListener("keydown", this.boundKey, true);
     window.removeEventListener("resize", this.boundClose);
-    document.removeEventListener("scroll", this.boundClose, true);
+    document.removeEventListener("scroll", this.boundScroll, true);
   }
 
   renderMenu(items, { submenu = false } = {}) {
@@ -137,7 +153,7 @@ export class ContextMenu {
   }
 
   onPointerDown(event) {
-    if (this.host.contains(event.target)) {
+    if (!this.closeArmed || this.host.contains(event.target)) {
       return;
     }
     this.close();

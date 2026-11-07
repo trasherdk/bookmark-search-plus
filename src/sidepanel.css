@@ -320,11 +320,34 @@ html.is-dragging * {
   -webkit-user-drag: none;
 }
 
-.row .title {
+.row .label {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   flex: 1;
+}
+
+.row .title {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.row .link {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.row.selected .link {
+  color: var(--selected-text);
+}
+
+.row.result .primary .title {
+  flex: 1;
 }
 
 .row.result {
