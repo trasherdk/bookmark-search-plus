@@ -3,7 +3,6 @@
   "version": "1.9.7",
   "private": true,
   "description": "Find bookmarks quickly. Search titles, URLs, and folders, then reveal them in the tree.",
-  "packageManager": "pnpm@12.18.0",
   "scripts": {
     "package": "node scripts/package.mjs",
     "release": "node scripts/release.mjs",
