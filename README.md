@@ -117,25 +117,27 @@ Bookmarks are not uploaded. Nothing leaves the browser. See [PRIVACY.md](PRIVACY
 
 ## Releasing
 
-1. Bump `version` in `manifest.json` and the install step above.
-2. Commit (usually on `develop`), then merge to `master`.
-3. Tag the ship commit and push the tag:
+From a clean `develop` branch that matches `origin/develop`:
 
 ```text
-git tag v1.9.7
-git push origin master
-git push origin v1.9.7
+pnpm release:patch
+pnpm release:minor
+pnpm release:major
 ```
 
-GitHub Actions packages `bookmark-search-plus-<version>.zip` (manifest at the zip root, no `.git` or icon generator) and publishes a GitHub Release. The tag must match the manifest version (`v1.9.7` ↔ `1.9.7`).
+`pnpm release` ships the version already in `manifest.json`.
 
-Local dry run:
+The script bumps `manifest.json`, `package.json`, and the install step above, commits that on `develop`, merges it into `master`, fast-forwards `develop` to the same commit, then tags `vX.Y.Z` and pushes the tag. Chrome extension versions are `X.Y.Z` only.
+
+GitHub Actions packages `bookmark-search-plus-<version>.zip` (manifest at the zip root, no `.git` or icon generator) and publishes a GitHub Release. The tag must match the manifest version (`vX.Y.Z` ↔ `X.Y.Z`).
+
+Local dry run, without tagging:
 
 ```text
-node scripts/package.mjs
+pnpm package
 ```
 
-That writes `dist/bookmark-search-plus-1.9.7.zip`. Unzip and **Load unpacked**, or upload the zip to the [Chrome Web Store](https://chrome.google.com/webstore/devconsole).
+That writes `dist/bookmark-search-plus-<version>.zip`. Unzip and **Load unpacked**, or upload the zip to the [Chrome Web Store](https://chrome.google.com/webstore/devconsole).
 
 ## Out of scope (v1)
 
